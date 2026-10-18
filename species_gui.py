@@ -1503,8 +1503,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, APP_NAME,
                 f"No marine list found at:\n{MARINE_LISTS}\n\n"
-                "Create it with modernize_marinelife.py then "
-                "build_mkw_candidates.py.")
+                "The lists are not shipped: they are derived from the commercial "
+                "MarineLife Keywords product.\n\n"
+                "If you own a copy, build them with:\n"
+                "    python make_marine_lists.py \"MarineLife Keywords 1.0.txt\"\n\n"
+                "See docs/REGENERATE.md. Meanwhile, use Place list (GBIF), "
+                "Fill from location, or Load from file.")
             return
         entries: list[tuple[str, Path]] = []
         for label, fn in MARINE_GROUPS:

@@ -27,11 +27,22 @@ QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Y
 
 import species_gui as SG
 
-if len(sys.argv) < 2:
-    sys.exit("usage: make_screenshot.py PHOTO.jpg")
-photo = pathlib.Path(sys.argv[1])
+import argparse
+ap = argparse.ArgumentParser()
+ap.add_argument("photo", type=pathlib.Path)
+ap.add_argument("--list", dest="names", type=pathlib.Path,
+                default=REPO / "marine_lists" / "nudibranchs.txt",
+                help="a candidate name list (one per line); defaults to the "
+                     "nudibranch list built by make_marine_lists.py")
+a = ap.parse_args()
+photo = a.photo
 if not photo.is_file():
     sys.exit(f"no such photo: {photo}")
+if not a.names.is_file():
+    sys.exit(f"no candidate list at {a.names}\n"
+             "The lists are not shipped (see docs/REGENERATE.md). Build them with\n"
+             "  python make_marine_lists.py \"MarineLife Keywords 1.0.txt\"\n"
+             "or point at any list with --list")
 out = REPO / "docs" / "screenshot.png"
 
 
@@ -64,12 +75,11 @@ win.load_photo(str(photo))
 app.processEvents()
 
 # The shipped nudibranch list, exactly as the marine-list path would load it.
-names = [l.strip() for l in
-         (REPO / "marine_lists" / "nudibranchs.txt").read_text().splitlines() if l.strip()]
+names = [l.strip() for l in a.names.read_text().splitlines() if l.strip()]
 win.cand_edit.setPlainText("\n".join(names))
-win.cand_group = "nudibranchs"
+win.cand_group = a.names.stem
 win._update_cand_count()
-win.log.appendPlainText(f"marine list: nudibranchs — {len(names):,} names")
+win.log.appendPlainText(f"marine list: {a.names.stem} — {len(names):,} names")
 
 # Normal working state: online sources on, a named place, a sensible search radius.
 win.place.setText("Mabini, Batangas")

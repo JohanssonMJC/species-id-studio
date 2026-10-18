@@ -138,11 +138,11 @@ def classify(name: str, d: dict) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=str(
-        Path.home() / ".hermes/cache/scratch/species/marinelife_entries.json"))
+        HERE / "marine_lists" / "marinelife_entries.json"))
     ap.add_argument("--cache", default=str(
-        Path.home() / ".hermes/cache/scratch/species/mkw_gbif_cache.json"))
+        HERE / "marine_lists" / "mkw_gbif_cache.json"))
     ap.add_argument("--out", default=str(
-        Path.home() / ".hermes/cache/scratch/species/marinelife_modern.json"))
+        HERE / "marine_lists" / "marinelife_modern.json"))
     ap.add_argument("--delay", type=float, default=0.2)
     ap.add_argument("--limit", type=int, default=0, help="stop after N (0 = all)")
     ap.add_argument("--redo-status", default="",

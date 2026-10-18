@@ -167,9 +167,19 @@ GBIF: 14,953 occurrence records | ~100 km around 13.715,120.896
 
 ### `Marine list…` — your own curated list, offline
 
-Ships with lists derived from *MarineLife Keywords 1.0* (2009), modernised against
-GBIF: **7,836 usable names (90.1%)** out of 8,696, grouped so you can load the ~880
-nudibranchs instead of all ~7,400 marine species. Works with no network.
+**The name lists are not shipped here** — they are derived from *MarineLife Keywords
+1.0* (2009), a commercial product this project does not redistribute. If you own a copy,
+one command rebuilds them locally:
+
+```bash
+python make_marine_lists.py "/path/to/MarineLife Keywords 1.0.txt"
+```
+
+Reference run: 12,601 keyword records → 8,696 unique species → **7,405 distinct usable
+names**, grouped so you can load the ~880 nudibranchs instead of all 7,405 marine
+species. Synonymy collapses some records onto one accepted name; 632 genus-level and
+226 unmatchable names are kept apart rather than guessed. Works with no network.
+Full detail and options: [`docs/REGENERATE.md`](docs/REGENERATE.md).
 
 ### `Load from file…` — one scientific name per line
 
@@ -257,21 +267,30 @@ Columns: photo, taken, GPS, most likely species, probability, candidate source.
 
 ## Building your own name lists
 
-Three scripts turn an old keyword export into modern candidate lists. They are included
-because the same three problems bite every time.
+`make_marine_lists.py` runs all four stages in order — this is the command to use:
 
 ```bash
-# 1. parse a Lightroom/Aperture keyword export into a tree
-python lightroom_keywords.py "MarineLife Keywords 1.0.txt"
+python make_marine_lists.py "/path/to/MarineLife Keywords 1.0.txt"
+```
 
-# 2. resolve every name against GBIF (accepted names, synonyms, renames)
-python modernize_marinelife.py          # resumable; ~45 min for 8,696 names
+Under the hood it is four scripts, kept separate because the same four problems bite
+every time and you may want to re-run one of them alone:
 
-# 3. repair the residual typos under a strict safety rule
-python repair_typos.py
+| stage | script | why it is its own step |
+|---|---|---|
+| parse | `lightroom_keywords.py` | the export is CR-only with tab-depth nesting; get this wrong and every name is garbage |
+| modernise | `modernize_marinelife.py` | GBIF renames; needs a 45-minute resumable cache |
+| repair | `repair_typos.py` | typos are dangerous — this refuses to guess a different species |
+| emit | `build_mkw_candidates.py` | grouping is a judgement call, not a lookup |
 
-# 4. emit the per-group candidate lists
-python build_mkw_candidates.py
+```bash
+python lightroom_keywords.py "MarineLife Keywords 1.0.txt"   # outline only
+python modernize_marinelife.py --src marine_lists/marinelife_entries.json \
+                               --cache marine_lists/mkw_gbif_cache.json \
+                               --out marine_lists/marinelife_modern.json
+python repair_typos.py --modern marine_lists/marinelife_modern.json \
+                       --cache marine_lists/mkw_typo_cache.json
+python build_mkw_candidates.py --dir marine_lists
 ```
 
 Result: `marine_lists/*.txt`, one file per group, plus

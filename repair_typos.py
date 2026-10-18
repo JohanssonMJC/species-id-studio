@@ -235,9 +235,9 @@ def repair_entry(entry: dict, genera: set[str], epithets: set[str]) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--modern", default=str(
-        Path.home() / "Documents/python/mcp_trial/marine_lists/marinelife_modern.json"))
+        HERE / "marine_lists" / "marinelife_modern.json"))
     ap.add_argument("--cache", default=str(
-        Path.home() / "Documents/python/mcp_trial/marine_lists/mkw_typo_cache.json"))
+        HERE / "marine_lists" / "mkw_typo_cache.json"))
     ap.add_argument("--delay", type=float, default=0.0,
                     help="unused; repair is local, kept for interface compatibility")
     ap.add_argument("--limit", type=int, default=0)

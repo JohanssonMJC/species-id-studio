@@ -28,11 +28,22 @@ jobs:
       - name: Install minimal deps
         run: pip install "Pillow>=10.0"
 
-      - name: GBIF naming rules
-        run: python tests/test_gbif_naming.py
+      # Discover rather than list: a new tests/test_*.py is picked up automatically, so
+      # a test can never be written and silently not run.
+      - name: Run every logic test
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(tests/test_*.py)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no tests found — refusing to report a green run"; exit 1
+          fi
+          fail=0
+          for f in "${files[@]}"; do
+            echo "::group::$f"
+            python "$f" || fail=1
+            echo "::endgroup::"
+          done
+          echo "ran ${#files[@]} suites"
+          exit $fail
 
-      - name: Typo-repair safety predicate
-        run: python tests/test_typo_rules.py
-
-      - name: Lightroom keyword parsing
-        run: python tests/test_lightroom.py

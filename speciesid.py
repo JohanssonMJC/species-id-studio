@@ -336,8 +336,9 @@ def main() -> int:
               "scientific name per line.\n"
               "There is no built-in default list: the candidates ARE the answer "
               "space, so they have to come from somewhere you chose.\n"
-              "Ready-made lists live in marine_lists/*.txt (from the MarineLife "
-              "keyword list), e.g. marine_lists/nudibranchs.txt",
+              "Ready-made lists are built into marine_lists/*.txt by "
+              "make_marine_lists.py from a MarineLife Keywords export you supply "
+              "(they are not redistributed), e.g. marine_lists/nudibranchs.txt",
               file=sys.stderr)
         return 2
     print(f"\nscoring {len(cands)} candidates against {args.image} …")

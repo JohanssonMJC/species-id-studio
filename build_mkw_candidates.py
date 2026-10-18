@@ -50,7 +50,13 @@ TAXON_GROUPS = {
 }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    global S
+    import argparse
+    ap = argparse.ArgumentParser(description="Emit per-group candidate lists.")
+    ap.add_argument("--dir", default=str(S), help="output directory for the .txt lists")
+    a = ap.parse_args(argv)
+    S = Path(a.dir)
     modern = json.load(open(S / "marinelife_modern.json"))
     counts = Counter(e["status"] for e in modern)
     # "typo-repaired" = a 2009 typo corrected against GBIF and confirmed to resolve.
