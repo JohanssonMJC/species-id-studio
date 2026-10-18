@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  logic:
+    name: logic tests (no network, no models)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # The pure-logic tests only need Pillow (speciesid imports it at module level);
+      # torch, open_clip and PyQt6 are deliberately NOT installed — these tests must
+      # stay runnable anywhere.
+      - name: Install minimal deps
+        run: pip install "Pillow>=10.0"
+
+      - name: GBIF naming rules
+        run: python tests/test_gbif_naming.py
+
+      - name: Typo-repair safety predicate
+        run: python tests/test_typo_rules.py
+
+      - name: Lightroom keyword parsing
+        run: python tests/test_lightroom.py

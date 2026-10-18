@@ -1,0 +1,31 @@
+# --- models are large binaries and are never committed -----------------------
+# BioCLIP 2 (~2.3 GB) and the vision model (~5 GB + 0.75 GB mmproj) live outside the
+# repo. See README «Models» for the expected paths.
+Models/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.bin
+
+# --- test scratch -------------------------------------------------------------
+.test-tmp/
+tests/.test-tmp/
+
+# --- build artefacts from the marine-list pipeline ----------------------------
+# The finished *.txt name lists ARE tracked (they are the shipped data). The
+# intermediate caches below are reproducible from them.
+marine_lists/mkw_gbif_cache.json
+marine_lists/marinelife_entries.json
+marine_lists/marinelife_modern.json
+
+# --- python / editor ---------------------------------------------------------
+__pycache__/
+*.py[cod]
+*egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+.idea/
+.vscode/

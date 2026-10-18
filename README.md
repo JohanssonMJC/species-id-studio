@@ -1,0 +1,360 @@
+# Species ID Studio
+
+A desktop app for identifying an organism from a photo, offline-first, with a
+candidate list you control.
+
+Two engines work together:
+
+- **Tier 1 — BioCLIP 2 (local, in-process).** A zero-shot CLIP-family model that ranks
+  a *supplied* list of candidate names against your photo. It cannot invent a name that
+  is not in the list, which is the point: you constrain the answer space instead of
+  trusting a fixed label set.
+- **Tier 2 — a local vision LLM (optional).** A second opinion that describes
+  diagnostic features and argues for a species. Kept independent of Tier 1 by default
+  (see [Two opinions, not one](#two-opinions-not-one)).
+
+Around that sits the part that actually decides accuracy: **where the candidate list
+comes from**. A photo can only be identified against names you give it.
+
+![screenshot placeholder](docs/screenshot.png)
+
+---
+
+## Contents
+
+- [Why it is built this way](#why-it-is-built-this-way)
+- [Install](#install)
+- [Models](#models)
+- [Quick start](#quick-start)
+- [Candidate sources](#candidate-sources)
+- [Two opinions, not one](#two-opinions-not-one)
+- [Photo metadata](#photo-metadata)
+- [Batch mode](#batch-mode)
+- [Building your own name lists](#building-your-own-name-lists)
+- [Tests](#tests)
+- [Known limitations](#known-limitations)
+- [Data sources and credit](#data-sources-and-credit)
+
+---
+
+## Why it is built this way
+
+The core finding, from measurement rather than assumption:
+
+> **Supplying a region- and group-specific candidate list is a bigger accuracy lever
+> than changing the model.**
+
+A global list of ~7,200 marine species and a 15 km list of ~350 nudibranchs both put
+the right answer at rank 1 — but the narrower list is sharper, faster, and its top pick
+is more confident. A big candidate list costs encoding time, not per-photo accuracy:
+
+| candidates | text encode | per-photo score | top-1 |
+|---|---|---|---|
+| 200 | 12 s | 0.49 s | 5/5 |
+| 500 | 31 s | 0.49 s | 5/5 |
+| 1,000 | 63 s | 0.49 s | 5/5 |
+| 1,516 | 96 s | 0.49 s | 5/5 |
+
+So the app is built around **narrowing**, not around a bigger model.
+
+---
+
+## Install
+
+Requires Python 3.11+ and a desktop session (Qt). Linux is what it was developed on;
+macOS and Windows should work but are untested.
+
+```bash
+git clone https://github.com/<you>/species-id-studio.git
+cd species-id-studio
+
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+`uv` works too and is faster:
+
+```bash
+uv venv .venv && uv pip install --python .venv -r requirements.txt
+```
+
+Launch:
+
+```bash
+python species_gui.py
+```
+
+Check the engines without opening the window:
+
+```bash
+python species_gui.py --selftest
+```
+
+> `--selftest` only verifies that the engine files and config are present. It does
+> **not** build the window, so it can pass while the UI is broken — the tests do that.
+
+---
+
+## Models
+
+Model weights are **not** in this repository (they are gigabytes). Put them here:
+
+| What | Path | Size | Needed for |
+|---|---|---|---|
+| BioCLIP 2 checkpoint | `~/Models/speciesid/bioclip-2/open_clip_model.safetensors` | ~2.3 GB | Tier 1 identification |
+| BioCLIP 2 config | `~/Models/speciesid/bioclip-2/open_clip_config.json` | small | Tier 1 identification |
+| Vision LLM | `~/Models/qwen_image/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf` | ~5 GB | Tier 2 second opinion |
+| Vision projector | `~/Models/speciesid/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf` | ~0.75 GB | Tier 2 second opinion |
+
+Paths are overridable in the app (`Vision server → …`) and in
+`~/.config/species_studio.json`.
+
+The vision LLM is served by a `llama-server` the app owns (it starts and stops it
+itself, on `127.0.0.1:8081`), which is why a `llama.cpp` build with `--mmproj` support
+is required for Tier 2. **Tier 1 needs none of that** — BioCLIP runs in-process on CPU
+at roughly 0.3 s per photo.
+
+`open_clip` loads a local model from a directory containing
+`open_clip_config.json` + `open_clip_model.safetensors`. If loading fails, that pair is
+the first thing to check.
+
+---
+
+## Quick start
+
+1. **Open a photo** (or drag one onto the window).
+2. **Say where you were.** Either type a place in `Place` and press *Find place*, or
+   type latitude/longitude directly (a GPS-tagged photo fills these itself).
+3. **Say what kind of animal it is** in the `group` selector. You rarely know the
+   species; you usually know the group, and the group decides the candidate list.
+4. **Load a candidate list** — `Place list (GBIF)`, `Marine list…`, or
+   `Load from file…` (see below).
+5. **Identify (local BioCLIP)** → the ranked list appears, with probabilities.
+6. Optionally **Ask vision model** for a second opinion.
+7. **Copy a name** with `Ctrl+C` or right-click → *Copy name*
+   / *Open in iNaturalist* / *Open in GBIF* / *Open in Google Images*.
+
+The status line always shows **where the next lookup will search** — coordinates,
+place name and radius — because a wrong location silently produces a plausible but
+wrong species list.
+
+---
+
+## Candidate sources
+
+The list box is the answer space. Three ways to fill it:
+
+### `Place list (GBIF)` — what is actually recorded near you
+
+Queries GBIF occurrence records around the coordinates, narrowed by group and
+habitat, and ranks species by **how often they have been recorded there**.
+
+```
+GBIF: 14,953 occurrence records | ~100 km around 13.715,120.896
+      | taxon Nudibranchia | 541 species
+```
+
+- **No account or API key required.**
+- **Loading replaces the list** (there is an `add to list` checkbox if you want to
+  merge instead).
+- The count label names the taxon, e.g. `541 candidates — Nudibranchia`, so you can
+  see the filter is applied.
+
+### `Marine list…` — your own curated list, offline
+
+Ships with lists derived from *MarineLife Keywords 1.0* (2009), modernised against
+GBIF: **7,836 usable names (90.1%)** out of 8,696, grouped so you can load the ~880
+nudibranchs instead of all ~7,400 marine species. Works with no network.
+
+### `Load from file…` — one scientific name per line
+
+Any plain text list. Comments (`#`) and blank lines are ignored.
+
+---
+
+## Two opinions, not one
+
+`Ask vision model` sends the photo to the local vision LLM. By default it is **blind**
+to BioCLIP's answer, and that is deliberate.
+
+Observed in real use: BioCLIP put the correct species at rank 10 of ~540, and a vision
+model that had been shown a candidate list simply restated rank 1 — which was wrong.
+A second opinion is only worth asking for if it is independent.
+
+So:
+
+- **The candidate list is opt-in.** A checkbox — *"Give the vision model the BioCLIP
+  list (biases it)"* — is off. Unticked, the model sees only the photo.
+- **It reasons before naming.** The prompt demands diagnostic features first, then a
+  name, and explicitly allows "not enough detail to name a species".
+- **It gets context, but not answers.** Location, habitat and the assumed group are
+  always included, framed as fallible:
+
+  ```
+  Context supplied by the user. It is a hint, not evidence, and it may be wrong —
+  if the photo clearly contradicts it, say so and go with what you can see:
+    - location: 13.715, 120.896 (Mabini, PH, BT), within roughly 100 km
+    - habitat: underwater (marine records only)
+    - assumed group (the user's own guess): sea · nudibranchs & sea slugs — i.e. Nudibranchia
+  ```
+
+- **Afterwards the app compares the two** and says where the vision answer sat in
+  BioCLIP's ranking:
+
+  ```
+  cross-check: the vision model named X, which BioCLIP ranked #10 (1.4%)
+               — the two disagree on the top pick
+  cross-check: the vision model agreed with BioCLIP's top pick (Y, 69.5%)
+               — not independent evidence, and if that pick is wrong both are wrong
+  ```
+
+`top_k` (how many ranks are shown) defaults to **15**; raise it in
+`~/.config/species_studio.json`.
+
+---
+
+## Photo metadata
+
+EXIF is read when a photo is opened or batched:
+
+| Field | Used for |
+|---|---|
+| GPS | fills Lat/Lon, which drives the regional candidate list |
+| Date | reported (month filtering is available but off by default — see below) |
+| Make/Model | reported |
+
+**Month filtering is off by default.** Enabling it is expensive: the same Anilao query
+returns 1,357 records / 314 species unfiltered and 2 records in January. GBIF coverage
+is sparse and survey-driven per month, so a month filter measures when people happened
+to visit, not seasonality.
+
+Most web images carry no metadata (in one real 22-image set: 9 had EXIF, 8 a date, 0
+GPS). The app says so rather than failing silently.
+
+---
+
+## Batch mode
+
+- **`Batch folder…`** — every image in a folder (optional recursion).
+- **`Batch files…`** — pick photos by hand (ctrl-click for several).
+
+Each photo is identified with **its own GPS and date**, so a set shot at one dive site
+gets that site's list per photo. Results are auto-saved as CSV **and** JSON to
+`~/species_results/`, and can be exported again from the Batch tab.
+
+**Selecting a row previews the photo** in the viewer on the left — filenames like
+`DSC_4821.NEF` tell you nothing about the animal. The preview deliberately does *not*
+apply EXIF, so clicking through a batch cannot silently rewrite your search area.
+
+Columns: photo, taken, GPS, most likely species, probability, candidate source.
+
+---
+
+## Building your own name lists
+
+Three scripts turn an old keyword export into modern candidate lists. They are included
+because the same three problems bite every time.
+
+```bash
+# 1. parse a Lightroom/Aperture keyword export into a tree
+python lightroom_keywords.py "MarineLife Keywords 1.0.txt"
+
+# 2. resolve every name against GBIF (accepted names, synonyms, renames)
+python modernize_marinelife.py          # resumable; ~45 min for 8,696 names
+
+# 3. repair the residual typos under a strict safety rule
+python repair_typos.py
+
+# 4. emit the per-group candidate lists
+python build_mkw_candidates.py
+```
+
+Result: `marine_lists/*.txt`, one file per group, plus
+`_UNRESOLVED_review_these.txt` (228 names kept rather than guessed) — and
+`_genus_level.txt` for names only identified to genus.
+
+**The typo rule is the important part.** A name is only "repaired" if it is within 2
+edits per token and 3 total, and the result is confirmed to resolve to an active taxon.
+`Chromi alta → Chromis alta` is accepted (1 edit). `Trapezia wardi → Trapezia tigrina`
+is refused (a different crab, 6 edits). Every repair records from → to, distance, path
+and evidence.
+
+---
+
+## Tests
+
+```bash
+python tests/test_gbif_naming.py    # naming rules, group mapping, geometry
+python tests/test_typo_rules.py     # the typo safety predicate
+python tests/test_lightroom.py      # keyword-export parsing
+```
+
+These three are pure logic — no network, no models, no Qt — and are what CI runs.
+
+The full suite used during development (17 files) additionally covers the GUI end to
+end, but needs PyQt6, the model files and network access, so it is not in CI. If you add
+GUI tests, run them offscreen:
+
+```bash
+QT_QPA_PLATFORM=offscreen SPECIES_CFG=/tmp/test-cfg.json python tests/test_gui.py
+```
+
+**Always set `SPECIES_CFG` in tests.** It redirects the config file so a test cannot
+rewrite your real settings — this is enforced by checking the config's hash before and
+after a suite run.
+
+---
+
+## Known limitations
+
+Stated plainly, because each one is a silent-wrong-answer if you do not know about it.
+
+- **"Reef fish" cannot be filtered in GBIF.** `/species/204` *is* Actinopterygii, but
+  every fish occurrence record carries `classKey = None`, so `taxonKey=204` returns 0
+  records. The group therefore falls back to restricting the regional list against your
+  own bony-fish names, and says so. For fish, the iNaturalist path
+  (`Fill from location`) is better — it has a working Actinopterygii taxon.
+- **There is no "land only" filter.** GBIF has no `isTerrestrial` (nor `isMarine`).
+  Leaving depth unset does not select land — it stops excluding marine. Depth presence
+  is *metadata*, not habitat: many marine records simply have no depth value.
+- **Counts measure survey effort, not abundance.** 422 *Chromodoris annae* at Anilao
+  means 422 catalogue records, not that it is the commonest animal on the reef.
+- **Place names are ambiguous.** "Anilao" matches exactly one iNaturalist place —
+  Anilao, *Iloilo*, ~1,000 km from the Batangas dive area, where only 4 nudibranch
+  species are recorded. The dive area is filed as **Mabini, PH, BT (13.715, 120.896)**.
+  The app asks you to confirm coordinates when a name matches only one place, for
+  exactly this reason.
+- **BioCLIP ranks plausibility, not certainty.** A hard species in a species-rich genus
+  lands mid-list. It is a zero-shot image-text matcher, not a taxonomist.
+- **The window's minimum width is ~1,300 px.** Below that it will overhang a small
+  display; the layout cannot shrink further without restructuring the control rows.
+- **`--selftest` does not build the window.** It checks engine files only.
+
+---
+
+## Data sources and credit
+
+- **GBIF** — occurrence and backbone taxonomy via `https://api.gbif.org/v1`.
+  Occurrence data is CC BY 4.0 / CC0 depending on the dataset; see
+  <https://www.gbif.org/citation-guidelines>. This app queries the public API live and
+  does not redistribute GBIF records.
+- **iNaturalist** — place search and regional species lists via
+  `https://api.inaturalist.org/v1`. Observations are individually licensed; the API is
+  queried live.
+- **BioCLIP 2** — image encoder from the BioCLIP project (Stevens et al., CVPR 2024;
+  BioCLIP 2: Gu et al.). Check the model card for its licence before redistribution.
+- **Qwen3-VL** — vision-language model by Alibaba Qwen, Apache-2.0.
+- **MarineLife Keywords 1.0** (2009) — the source of the bundled marine name lists.
+  The names have been modernised against GBIF; the original file is included under
+  `marine_lists/` for provenance.
+
+If you publish identifications made with this tool, cite GBIF and the underlying
+observation datasets — a species list is only as good as the records behind it.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). The bundled name lists and third-party models keep their
+own terms; see [Data sources and credit](#data-sources-and-credit).

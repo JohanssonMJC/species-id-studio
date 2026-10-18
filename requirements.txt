@@ -1,0 +1,15 @@
+# Runtime dependencies for Species ID Studio.
+#
+# Tested on Linux with Python 3.11. Versions are minimums, not pins — the app does not
+# depend on exact releases, but open_clip's local-directory behaviour changed around
+# 3.0, so older releases may not load the BioCLIP 2 checkpoint.
+
+PyQt6>=6.6
+Pillow>=10.0
+
+# --- only needed for identification (Tier 1 / Tier 2), not for browsing lists ---
+# CPU build is fine and is what was used for development: BioCLIP 2 scores a photo in
+# ~0.3 s on CPU, so a GPU is optional.
+torch>=2.1
+open_clip_torch>=3.0
+numpy>=1.24
