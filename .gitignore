@@ -19,6 +19,13 @@ marine_lists/mkw_gbif_cache.json
 marine_lists/marinelife_entries.json
 marine_lists/marinelife_modern.json
 
+# --- never redistribute the original keyword product -------------------------
+# Only the derived, GBIF-modernised name lists are shipped. Guard against the source
+# archive being committed by accident.
+marine_lists/*.zip
+*MarineLife*Keyword*
+*marine*keyword*.txt
+
 # --- python / editor ---------------------------------------------------------
 __pycache__/
 *.py[cod]
