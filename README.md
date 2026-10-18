@@ -16,7 +16,11 @@ Two engines work together:
 Around that sits the part that actually decides accuracy: **where the candidate list
 comes from**. A photo can only be identified against names you give it.
 
-![screenshot placeholder](docs/screenshot.png)
+![Species ID Studio identifying a Nembrotha chamberlaini nudibranch: ranked candidates on the right, the photo and the 880-name candidate list on the left](docs/screenshot.png)
+
+<sub>Screenshot produced by `docs/make_screenshot.py` using the real model and the shipped
+nudibranch list — the probabilities are BioCLIP's actual output, not mock-ups.</sub>
+
 
 ---
 
