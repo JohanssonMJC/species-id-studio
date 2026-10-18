@@ -368,10 +368,17 @@ Stated plainly, because each one is a silent-wrong-answer if you do not know abo
 - **BioCLIP 2** — image encoder from the BioCLIP project (Stevens et al., CVPR 2024;
   BioCLIP 2: Gu et al.). Check the model card for its licence before redistribution.
 - **Qwen3-VL** — vision-language model by Alibaba Qwen, Apache-2.0.
-- **MarineLife Keywords 1.0** (2009) — the vocabulary the bundled marine name lists were
-  derived from. **The original product file is not redistributed here**; only the
-  derived, GBIF-modernised name lists are shipped. If you want to rebuild them, supply
-  your own copy of the keyword export to `lightroom_keywords.py`.
+- **MarineLife Keywords 1.0** (2009) — *MarineLife Keywords* was used to guide the
+  marine candidate lists this project was developed against. **Neither the product nor
+  any file derived from it is included in this repository.** `make_marine_lists.py` can
+  consume a copy **you own** to build lists on your own machine; how you may use that
+  copy is between you and its publisher, and nothing here grants or implies a licence to
+  it. This project is not affiliated with, sponsored by, or endorsed by the publisher.
+
+  What this repository does contain is its own work: the parsing, the GBIF
+  modernisation, the typo-repair rules and the grouping (§ *Building your own name
+  lists*). Taxonomic names are facts, and every name in a rebuilt list has been resolved
+  against the GBIF backbone above, under GBIF's terms.
 
 If you publish identifications made with this tool, cite GBIF and the underlying
 observation datasets — a species list is only as good as the records behind it.
@@ -380,5 +387,6 @@ observation datasets — a species list is only as good as the records behind it
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The bundled name lists and third-party models keep their
-own terms; see [Data sources and credit](#data-sources-and-credit).
+MIT — see [LICENSE](LICENSE). **No name lists are bundled**, so nothing derived from a
+third-party product is redistributed here. Third-party models keep their own terms; see
+[Data sources and credit](#data-sources-and-credit).

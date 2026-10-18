@@ -186,11 +186,12 @@ GROUPS: list[tuple[str, dict]] = [
 GROUP_LABELS = [label for label, _ in GROUPS]
 
 # --- the user's own modernised marine keyword lists -------------------------
-# Built from MarineLife Keywords 1.0 (2009) by resolving every name against GBIF
-# and keeping the accepted binomial. Grouped so a diver can pull in the ~880
-# nudibranchs rather than all ~7,200 marine names: a narrower list encodes faster
-# and keeps the top pick's confidence sharper (measured: a shrimp's margin fell
-# 100% -> 56% between a 200- and a 1,516-name list, though it stayed #1).
+# NOT shipped (see docs/REGENERATE.md): built locally from a MarineLife Keywords 1.0
+# (2009) export you own, by resolving every name against GBIF and keeping the accepted
+# binomial. Grouped so a diver can pull in the ~880 nudibranchs rather than all ~7,400
+# marine names: a narrower list encodes faster and keeps the top pick's confidence
+# sharper (measured: a shrimp's margin fell 100% -> 56% between a 200- and a 1,516-name
+# list, though it stayed #1).
 MARINE_LISTS = Path(__file__).parent / "marine_lists"
 MARINE_GROUPS: list[tuple[str, str]] = [
     ("all marine species", "all_marine.txt"),
