@@ -50,9 +50,15 @@ The core finding, from measurement rather than assumption:
 > **Supplying a region- and group-specific candidate list is a bigger accuracy lever
 > than changing the model.**
 
-A global list of ~7,200 marine species and a 15 km list of ~350 nudibranchs both put
-the right answer at rank 1 — but the narrower list is sharper, faster, and its top pick
-is more confident. A big candidate list costs encoding time, not per-photo accuracy:
+Two different kinds of list were compared on the same photos. A **global** one — all
+7,405 marine names from a keyword export — and a **regional** one — the nudibranchs
+recorded within 0–40 m of a single dive site, 393 at Anilao. Both put the right answer at
+rank 1, so a long list does not degrade the ranking itself. What the long list costs is
+text-encoding time, and what it dulls is the evidence behind the top pick: on one shrimp
+the gap to the runner-up fell from 100% to 56%, though it still ranked first.
+
+Scaling test over lists of 200 to 1,516 names — encoding grows roughly linearly,
+per-photo scoring is flat, and top-1 never slipped:
 
 | candidates | text encode | per-photo score | top-1 |
 |---|---|---|---|
@@ -61,7 +67,11 @@ is more confident. A big candidate list costs encoding time, not per-photo accur
 | 1,000 | 63 s | 0.49 s | 5/5 |
 | 1,516 | 96 s | 0.49 s | 5/5 |
 
-So the app is built around **narrowing**, not around a bigger model.
+So the app is built around **narrowing**, not around a bigger model. Narrowing has a
+failure mode of its own, though: narrowing by *group* must never drop the true species,
+which is why each group maps to the widest taxon GBIF accepts (see
+[Groups are deliberately broad](#groups-are-deliberately-broad)). Excluding the right
+answer costs the entire identification; including extra names costs only some confidence.
 
 ---
 
@@ -186,14 +196,19 @@ Queries GBIF occurrence records around the coordinates, narrowed by group and
 habitat, and ranks species by **how often they have been recorded there**.
 
 ```
-GBIF: 14,953 occurrence records | ~100 km around 13.715,120.896
-      | taxon Nudibranchia | 541 species
+GBIF: 14,173 occurrence records | ~100 km around 13.715,120.896
+      | taxon Nudibranchia | depth 0-40 m | 393 species
 ```
+
+(Occurrence counts grow as GBIF receives records, so the record total will not match
+exactly; the species count for a fixed area and filter is much steadier. With no depth
+filter the same area returns 541 species — depth only ever *subtracts*, because it
+selects records that happen to carry a depth reading.)
 
 - **No account or API key required.**
 - **Loading replaces the list** (there is an `add to list` checkbox if you want to
   merge instead).
-- The count label names the taxon, e.g. `541 candidates — Nudibranchia`, so you can
+- The count label names the taxon, e.g. `393 candidates — Nudibranchia`, so you can
   see the filter is applied.
 
 #### Groups are deliberately broad
@@ -367,7 +382,7 @@ python build_mkw_candidates.py --dir marine_lists
 ```
 
 Result: `marine_lists/*.txt`, one file per group, plus
-`_UNRESOLVED_review_these.txt` (228 names kept rather than guessed) — and
+`_UNRESOLVED_review_these.txt` (226 names kept rather than guessed) — and
 `_genus_level.txt` for names only identified to genus.
 
 **The typo rule is the important part.** A name is only "repaired" if it is within 2
