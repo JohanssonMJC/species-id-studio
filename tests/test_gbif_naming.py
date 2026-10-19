@@ -5,6 +5,7 @@ No network, no models, no Qt — these run anywhere, which is why they are what 
 They pin the parsing rules that were each written in response to a real wrong answer.
 """
 import pathlib
+import inspect
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -48,13 +49,17 @@ for real in ["Hypselodoris roo", "Goniobranchus coi", "Hypselodoris iba",
              "Hallaxa iju", "Noumeaella isa", "Chromodoris annae"]:
     check(f"accept {real!r}", GC.is_species_name(real))
 
-print("\n5. depth bands are two, and 'land' is not offered as a filter")
-check("exactly two depth options", len(GC.DEPTH_BANDS) == 2, str(list(GC.DEPTH_BANDS)))
-check("one of them is unfiltered", any(v is None for v in GC.DEPTH_BANDS.values()))
-check("the other requires a depth reading",
-      any(v == "0,11000" for v in GC.DEPTH_BANDS.values()))
-check("no 'land only' label (GBIF cannot filter terrestrial)",
-      not any("land only" in k.lower() for k in GC.DEPTH_BANDS))
+print("\n5. there is no depth filter, deliberately")
+# Depth is reported inconsistently by GBIF, so any depth filter silently removes real
+# species. Measured at Anilao, 100 km: 143 of 541 nudibranch species carry no depth at
+# all, and 880 of 1,672 crustacean species are recorded only below 40 m. A control that
+# can only subtract is a trap, so it was removed rather than given better presets.
+check("no depth presets exist", not hasattr(GC, "DEPTH_BANDS"))
+check("fetch_candidates still accepts a depth range for scripts",
+      "depth" in inspect.signature(GC.fetch_candidates).parameters)
+check("the depth parameter is documented as subtractive",
+      "CARRY a depth reading" in (inspect.getdoc(GC.fetch_candidates) or "").replace("\n", " "),
+      (inspect.getdoc(GC.fetch_candidates) or "")[:80])
 
 print("\n6. group mapping: iNaturalist specs -> GBIF group names")
 cases = [({"taxa": [47113]}, "nudibranchs"),

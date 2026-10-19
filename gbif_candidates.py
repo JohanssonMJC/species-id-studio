@@ -226,10 +226,11 @@ def group_from_spec(spec: dict | str | None) -> str | None:
 # So the honest pair is "any" (most complete) and "underwater only" (records that
 # carry a depth). "On land" cannot be selected for — GBIF has no isTerrestrial, exactly
 # as it has no isMarine — and depth presence does not identify it either.
-DEPTH_BANDS = {
-    "any (land + underwater)": None,
-    "underwater only": "0,11000",
-}
+# No depth presets. The GUI no longer offers a depth control, because GBIF's depth
+# field is populated inconsistently and a depth filter can only ever SUBTRACT: at
+# Anilao, 143 of 541 nudibranch species carry no depth at all, so any depth filter hides
+# them, and 880 of 1,672 crustacean species there are recorded only below 40 m.
+# `fetch_candidates(depth=...)` remains available for scripts that know what they want.
 
 DEFAULT_RADIUS_KM = 30.0
 
@@ -427,6 +428,11 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
 
     `group` is one of GROUP_TAXA. Either supply lat/lon (with radius) or an explicit
     bbox as (min_lat, max_lat, min_lon, max_lon).
+
+    `depth` is a GBIF range string such as "0,40". It is NOT exposed in the GUI and
+    should be used with care: it selects the records that happen to CARRY a depth
+    reading, so it drops every record without one — 143 of 541 nudibranch species at
+    Anilao — and every species recorded only outside the range.
     """
     facet_limit = max(1, min(int(limit), FACET_LIMIT_MAX))
     params: dict[str, object] = {"limit": 0, "facet": "scientificName",
@@ -581,14 +587,19 @@ def main() -> int:
     ap.add_argument("--lon", type=float)
     ap.add_argument("--radius", type=float, default=DEFAULT_RADIUS_KM)
     ap.add_argument("--group", choices=sorted(GROUP_TAXA))
-    ap.add_argument("--depth", choices=sorted(k for k in DEPTH_BANDS if DEPTH_BANDS[k]))
+    # Raw GBIF range, e.g. "0,40". Deliberately not a menu of presets: depth is
+    # metadata that subtracts, and the CLI should make that explicit rather than
+    # invite it. See the note above DEFAULT_RADIUS_KM.
+    ap.add_argument("--depth", metavar="MIN,MAX",
+                    help="GBIF depth range in metres; drops records without a depth "
+                         "reading and species recorded only outside the range")
     ap.add_argument("--limit", type=int, default=1000)
     ap.add_argument("--out")
     a = ap.parse_args()
 
     names, info = fetch_candidates(lat=a.lat, lon=a.lon, radius_km=a.radius,
                                   group=a.group,
-                                  depth=DEPTH_BANDS.get(a.depth) if a.depth else None,
+                                  depth=a.depth,
                                   limit=a.limit)
     print(info)
     print(f"\n  {len(names)} candidates, most-recorded first:")

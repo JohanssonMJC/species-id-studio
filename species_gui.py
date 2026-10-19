@@ -596,12 +596,12 @@ class GbifWorker(QThread):
                 group=self.group, depth=self.depth, limit=self.limit)
             if not names:
                 self.failed.emit(
-                    f"GBIF has no recorded species for {info}.\n\n"
+                    f"No species recorded here — {info}.\n\n"
                     "That is usually a wrong filter or a wrong PLACE, not an empty "
                     "sea — species-rich dive sites are heavily recorded. Check the "
                     "latitude/longitude are really where the photo was taken (a "
                     "place name can resolve to a same-named town elsewhere), then "
-                    "try a larger radius, a broader depth band, or a fuller group.")
+                    "try a larger radius or a broader group.")
                 return
             self.done.emit(names, info)
         except Exception as exc:
@@ -866,7 +866,7 @@ class MainWindow(QMainWindow):
         self.gbif_btn.clicked.connect(self.load_gbif)
         self.gbif_btn.setToolTip(
             "What is actually RECORDED near the latitude/longitude above, narrowed "
-            "to the group and depth band you pick — ranked by how often it has been "
+            "to the group you pick — ranked by how often it has been "
             "found there.\n\n"
             "This is the only source that is region-aware: your marine list is "
             "global (everything underwater, everywhere) and the iNaturalist route "
@@ -874,30 +874,6 @@ class MainWindow(QMainWindow):
             "taken.\n\n"
             "Needs the internet; no account or API key.")
         r2.addWidget(self.gbif_btn)
-        r2.addWidget(QLabel("depth"))
-        self.depth = QComboBox()
-        if gbif_candidates:
-            for lab in gbif_candidates.DEPTH_BANDS:
-                self.depth.addItem(lab, gbif_candidates.DEPTH_BANDS[lab])
-        # Let the combo size to a short length instead of its longest item, so it
-        # cannot inflate the row's minimum width.
-        self.depth.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.depth.setMinimumContentsLength(12)
-        self.depth.setToolTip(
-            "Two choices, and they are not 'land vs sea' — GBIF has no habitat switch.\n\n"
-            "• any (land + underwater) — no depth restriction, so this is the MOST "
-            "COMPLETE list. Use it: the group selector already keeps the taxa right, "
-            "and depth can only subtract.\n"
-            "• underwater only — only records that carry a depth reading. Measured at "
-            "Anilao on nudibranchs: 398 species instead of 541, because 143 of them have "
-            "no depth recorded at all. Depth presence is metadata, not "
-            "habitat.\n\n"
-            "Why no depth bands? Because the deep half is large and would vanish: at "
-            "Anilao a 0-40 m band returns 220 of 1,672 crustacean species, 192 of 668 "
-            "echinoderms, 393 of 541 nudibranchs — 880 crustacean species there are "
-            "recorded ONLY below 40 m. Use any depth and narrow by taxon instead.")
-        r2.addWidget(self.depth)
         cl.addLayout(r2)
 
         # Second row for the online switch and the live count. Keeping them in r2 made
@@ -1603,13 +1579,16 @@ class MainWindow(QMainWindow):
                 "them off a photo that has GPS (Open photo…).")
             return
         group = self.group.currentData()
-        depth = self.depth.currentData()
+        # No depth argument: the depth selector was removed because GBIF's depth field
+        # is populated inconsistently, and filtering on it silently drops real species
+        # (143 of 541 nudibranch species at Anilao have no depth recorded at all). The
+        # group filter does the useful narrowing.
         # Month is deliberately NOT passed: GBIF's per-month coverage is survey-driven
         # and sparse, and a month filter silently reduced this same query from 314
         # species to 2. The combo still drives the iNaturalist location list.
         self.gbif_btn.setEnabled(False)
         self.gbif_btn.setText("Asking GBIF…")
-        self.gbiFer = GbifWorker(lat, lon, self.radius.value(), group, depth)
+        self.gbiFer = GbifWorker(lat, lon, self.radius.value(), group, None)
         self.gbiFer.done.connect(self._on_gbif)
         self.gbiFer.failed.connect(self._on_gbif_fail)
         self._track(self.gbiFer)
@@ -1690,7 +1669,7 @@ class MainWindow(QMainWindow):
             hint = ("  — only a few species came back. That usually means the SEARCH "
                     "AREA is not where you think (a place name can resolve to a "
                     "same-named town far away — check the coordinates shown above), or "
-                    "the radius/depth is too tight.")
+                    "the radius is too tight.")
         if replace:
             self.log.appendPlainText(f"GBIF: {info}" + hint)
         else:
@@ -1916,15 +1895,14 @@ class MainWindow(QMainWindow):
             bits.append(f"location: {where}")
         except (TypeError, ValueError):
             pass
-        try:
-            # Use the item's VALUE, not its label: "any (land + underwater)" contains
-            # both "any" and "underwater", so string-matching the text reported the
-            # opposite of what was selected.
-            dep = self.depth.currentData()
-            bits.append("habitat: underwater (marine records only)" if dep else
-                        "habitat: not restricted — could be land or underwater")
-        except Exception:
-            pass
+        # No depth filter exists anywhere: GBIF's depth field is populated
+        # inconsistently — 143 of 541 nudibranch species at Anilao carry no depth at
+        # all — so filtering on it silently removes real species. Recorded in the
+        # export so a result can be reproduced.
+        bits.append("depth: not filtered (GBIF depth metadata is inconsistent)")
+        # Still tell the model that habitat is unconstrained: it changes how it should
+        # read the photo, even though no filter is applied.
+        bits.append("habitat: not restricted — could be land or underwater")
         try:
             label = self.group.currentText()
             taxon = None

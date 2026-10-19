@@ -203,14 +203,14 @@ GBIF: 14,173 occurrence records | ~100 km around 13.715,120.896
 (Occurrence counts grow as GBIF receives records, so the record total will not match
 exactly; the species count for a fixed area and filter is much steadier.)
 
-#### There are no depth bands, on purpose
+#### There is no depth filter at all, on purpose
 
 GBIF has no habitat switch: `isMarine`, `habitat` and `isTerrestrial` do not exist on
 `/v1/occurrence/search` and are silently ignored. What exists is `depth`, which selects
-the records that happen to **carry a depth reading**. A depth filter can therefore only
-ever subtract, and it subtracts in two very different ways:
+the records that happen to **carry a depth reading** — and depth is reported
+inconsistently. A depth filter can therefore only ever subtract, in two different ways:
 
-| Anilao, 100 km | any depth | underwater only | + a 0–40 m band |
+| Anilao, 100 km | no depth filter | "has a depth reading" | + a 0–40 m band |
 |---|---|---|---|
 | nudibranchs | 541 | 398 | 393 |
 | crustaceans | 1,672 | 1,100 | 220 |
@@ -226,10 +226,14 @@ ever subtract, and it subtracts in two very different ways:
   crustaceans out of 1,672, which reads as "the list is broken" when in fact the filter
   is doing exactly what it was asked.
 
-So the selector offers just two choices — **any (land + underwater)** and **underwater
-only** — and `any` is the default and the recommended one: it is the most complete list,
-and the group selector already keeps the taxa right. Narrowing by *taxon*, broadly, is
-safe; narrowing by *depth* is not.
+So **the app has no depth control** — not even an "underwater only" switch. Narrowing by
+*taxon*, broadly, is safe; narrowing by *depth* silently removes real species, and a
+control that only ever subtracts is a trap rather than a feature. The result is the most
+complete list GBIF can give you for that area, and the group selector keeps the taxa
+right.
+
+`fetch_candidates(depth=...)` still exists for scripts that want a range, and the CLI
+takes `--depth MIN,MAX` with that warning in its help text. The GUI never passes it.
 
 - **No account or API key required.**
 - **Loading replaces the list** (there is an `add to list` checkbox if you want to
