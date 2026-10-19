@@ -83,31 +83,70 @@ check("lon range brackets the point", lo0 < 120.93 < lo1, lon_r)
 check("0.27 deg of latitude for 30 km", abs((la1 - la0) - 0.5389) < 0.01, f"{la1-la0:.4f}")
 check("longitude widened to keep the radius", (lo1 - lo0) > (la1 - la0))
 
-print("\n9. a group may need SEVERAL taxa, and crustaceans does")
+print("\n9. a group may need SEVERAL taxa, and each entry may carry its own rank")
 # Crustacea has no usable key in the backbone: species/match?name=Crustacea matches a
 # GENUS (10996236) and Isopoda answers HIGHERRANK -> Arthropoda. The group was mapped to
 # Decapoda alone, which restricted it to crabs/shrimps/lobsters — at Anilao, 0-40 m that
 # returned 159 species where the union returns 220, losing mantis shrimps, krill,
-# barnacles and isopods. The mapping must stay a union of crustacean classes.
-crus, cr_rank = GC.GROUP_TAXA["crustaceans"]
-check("crustaceans maps to several taxa", isinstance(crus, (list, tuple)) and len(crus) >= 5,
-      str(crus))
-check("crustaceans is not Decapoda-only", "Decapoda" not in (crus if isinstance(crus, (list, tuple)) else [crus]),
-      str(crus))
-check("crustacean classes carry a rank hint", cr_rank == "CLASS", str(cr_rank))
-check("Malacostraca included", "Malacostraca" in crus, str(crus))
-check("barnacle class included (Maxillopoda)", "Maxillopoda" in crus, str(crus))
-check("copepods included", "Copepoda" in crus, str(crus))
-check("'Crustacea' is never used as the taxon name",
-      "Crustacea" not in crus, str(crus))
+# barnacles and isopods.
+def taxa_of(group):
+    """Group -> [(name, rank)] however the table expresses it."""
+    names, shared = GC.GROUP_TAXA[group]
+    if names is None:
+        return [], shared
+    if not isinstance(names, (list, tuple)):
+        return [(names, shared)], shared
+    out = []
+    for item in names:
+        if isinstance(item, (list, tuple)):
+            out.append((item[0], item[1] if len(item) > 1 else shared))
+        else:
+            out.append((item, shared))
+    return out, shared
 
-print("\n10. echinoderms means the phylum, not starfish")
-# Asteroidea is starfish only; the marine lists mean the phylum (urchins, cucumbers,
-# brittle stars, feather stars).
-echo_name, echo_rank = GC.GROUP_TAXA["echinoderms"]
-check("echinoderms maps to the phylum", echo_name == "Echinodermata", str(echo_name))
-check("echinoderms uses a phylum rank hint", echo_rank == "PHYLUM", str(echo_rank))
-check("echinoderms is not Asteroidea-only", echo_name != "Asteroidea", str(echo_name))
+crus, _ = taxa_of("crustaceans")
+crus_names = [n for n, _ in crus]
+check("crustaceans maps to several taxa", len(crus) >= 5, str(crus_names))
+check("crustaceans is not Decapoda-only", "Decapoda" not in crus_names, str(crus_names))
+check("crustacean entries carry ranks", all(r for _, r in crus), str(crus))
+check("Malacostraca included", "Malacostraca" in crus_names, str(crus_names))
+check("barnacle class included (Maxillopoda)", "Maxillopoda" in crus_names, str(crus_names))
+check("copepods included", "Copepoda" in crus_names, str(crus_names))
+
+print("\n10. no group may use a name that resolves to a GENUS")
+# "Crustacea" and "Tunicata" are real genera (10996236, 10971194) AND the obvious group
+# words. Using either as a filter would silently restrict a group to one genus.
+check("GENUS is rejected as a group rank", "GENUS" in GC.BAD_RANKS, str(GC.BAD_RANKS))
+check("SPECIES is rejected as a group rank", "SPECIES" in GC.BAD_RANKS, str(GC.BAD_RANKS))
+all_names = []
+for g in GC.GROUP_TAXA:
+    all_names.extend(n for n, _ in taxa_of(g)[0])
+check("'Crustacea' never used as a taxon", "Crustacea" not in all_names, "Crustacea")
+check("'Tunicata' never used as a taxon", "Tunicata" not in all_names, "Tunicata")
+
+print("\n11. broad beats narrow: the group must not exclude the obvious cases")
+# Each of these was previously a single narrow taxon that silently dropped members.
+expect = {
+    "echinoderms":    ["Echinodermata"],
+    "worms":          ["Annelida", "Nemertea", "Sipuncula", "Chaetognatha"],
+    "jellyfish":      ["Scyphozoa", "Cubozoa", "Ctenophora"],
+    "tunicates":      ["Ascidiacea", "Thaliacea", "Appendicularia"],
+    "algae_seaweed":  ["Rhodophyta", "Ochrophyta", "Chlorophyta"],
+    "sharks_rays":    ["Elasmobranchii", "Holocephali"],
+    "sea_slugs":      ["Nudibranchia", "Anaspidea"],
+    "dugongs_manatees": ["Sirenia"],
+}
+for g, must in expect.items():
+    names = [n for n, _ in taxa_of(g)[0]]
+    check(f"{g} includes {', '.join(must)}", all(m in names for m in must), str(names))
+
+# the specific narrow mappings that caused the bug must never come back
+check("echinoderms is not Asteroidea-only",
+      "Asteroidea" not in [n for n, _ in taxa_of("echinoderms")[0]], "Asteroidea")
+check("dugongs_manatees is not Dugongidae-only",
+      "Dugongidae" not in [n for n, _ in taxa_of("dugongs_manatees")[0]], "Dugongidae")
+check("worms is not Annelida-only",
+      len(taxa_of("worms")[0]) > 1, str(taxa_of("worms")[0]))
 
 print()
 if FAILS:

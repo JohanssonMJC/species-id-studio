@@ -39,54 +39,81 @@ UA = {"User-Agent": "SpeciesIDStudio/1.0 (local offline research tool; "
 
 CACHE = Path.home() / ".cache" / "species_studio" / "gbif_keys.json"
 
+# Ranks that are never a valid answer for a GROUP filter. "Crustacea" and "Tunicata"
+# both match real genera (10996236, 10971194) exactly, so EXACT is not enough.
+BAD_RANKS = {"GENUS", "SPECIES", "SUBSPECIES", "VARIETY", "FORM", "SECTION"}
+
 # Group -> the taxon name to resolve against GBIF. Kept deliberately in step with
 # TAXON_GROUPS in build_mkw_candidates.py so the marine lists and the GBIF lists
 # use the same vocabulary for the same group names.
 GROUP_TAXA = {
-    "nudibranchs": ("Nudibranchia", None),
-    "sea_slugs": ("Nudibranchia", None),
-    # Crustacea is NOT a usable taxon in the GBIF backbone: `species/match?name=Crustacea`
-    # returns an exact match on a GENUS keyed 10996236 — a genus literally named
-    # "Crustacea" — and "Isopoda" answers HIGHERRANK -> Arthropoda. Crustacea is
-    # paraphyletic, so no single key covers it. Mapping this group to Decapoda (as it
-    # was) silently restricted it to crabs, shrimps and lobsters: at Anilao, 0-40 m that
-    # returned 233 species where the crustaceans actually recorded there number ~311,
-    # because amphipods, isopods, krill, mantis shrimps, copepods and barnacles were all
-    # excluded. Union the classes instead — the keys below were read from GBIF by
-    # matching real species of each (barnacles resolve to Maxillopoda, not Thecostraca).
-    "crustaceans": (["Malacostraca", "Maxillopoda", "Copepoda", "Branchiopoda",
-                     "Ostracoda", "Remipedia"], "CLASS"),
-    "crabs_shrimps": ("Decapoda", None),
-    "cephalopods": ("Cephalopoda", None),
-    "corals_anemones": ("Anthozoa", None),
-    # Asteroidea is starfish only. "echinoderms" in the marine lists means the phylum:
-    # starfish, sea urchins, sea cucumbers, brittle stars and feather stars.
+    # DESIGN RULE: broad beats precise. A group that silently excludes the right
+    # answer gives BioCLIP a ZERO chance of picking it, so for every group the widest
+    # defensible taxon is used, and where no single key covers the group, several are
+    # unioned. Extra noise costs a little ranking accuracy; a missing candidate costs
+    # the entire identification. Verified against GBIF — every name below resolves
+    # EXACT at the rank given, and several obvious broad names do NOT exist in the
+    # backbone at all (Heterobranchia, Chondrichthyes, Actinopterygii, Sacoglossa,
+    # Euthyneura, Teleostei, Osteichthyes), which is why the unions look odd.
+    "nudibranchs": ("Nudibranchia", "ORDER"),
+    # "sea slugs" in a keywords list is broader than Nudibranchia — it includes the sea
+    # hares. Sacoglossa and Euthyneura have no exact match, so they cannot be added.
+    "sea_slugs": ([("Nudibranchia", "ORDER"), ("Anaspidea", "ORDER"),
+                   ("Aplysiomorpha", "ORDER")], None),
+    # Crustacea is NOT usable: `species/match?name=Crustacea` returns an exact match on
+    # a GENUS keyed 10996236, "Isopoda" answers HIGHERRANK -> Arthropoda, and crustacea
+    # is paraphyletic so no single key covers it. Mapping this to Decapoda (as it was)
+    # restricted the group to crabs/shrimps/lobsters: at Anilao, 0-40 m that returned
+    # 159 species where the union returns 220. Keys read from GBIF by matching a real
+    # species of each class (barnacles resolve to Maxillopoda, not Thecostraca).
+    "crustaceans": ([("Malacostraca", "CLASS"), ("Maxillopoda", "CLASS"),
+                     ("Copepoda", "CLASS"), ("Branchiopoda", "CLASS"),
+                     ("Ostracoda", "CLASS"), ("Remipedia", "CLASS")], "CLASS"),
+    "crabs_shrimps": ("Decapoda", "ORDER"),
+    "cephalopods": ("Cephalopoda", "CLASS"),
+    "corals_anemones": ("Anthozoa", "CLASS"),
+    # Asteroidea is starfish only. "echinoderms" means the phylum: urchins, cucumbers,
+    # brittle stars and feather stars too.
     "echinoderms": ("Echinodermata", "PHYLUM"),
-    "sea_cucumbers": ("Holothuroidea", None),
-    "sharks_rays": ("Elasmobranchii", None),
+    "sea_cucumbers": ("Holothuroidea", "CLASS"),
+    # Elasmobranchii is sharks, rays and skates; Holocephali adds the chimaeras, so a
+    # diver who photographs one does not get an empty list.
+    "sharks_rays": ([("Elasmobranchii", "CLASS"), ("Holocephali", "CLASS")], "CLASS"),
     "bony_fishes": (None, None),
-    "turtles": ("Testudines", None),
-    "cetaceans": ("Cetacea", None),
-    "seals": ("Pinnipedia", None),
-    "sea_snakes": ("Hydrophiidae", None),
-    "dugongs_manatees": ("Dugongidae", None),
-    "sponges": ("Porifera", None),
-    "tunicates": ("Ascidiacea", None),
-    "bryozoans": ("Bryozoa", None),
-    "worms": ("Annelida", None),
-    "jellyfish": ("Scyphozoa", None),
-    "algae_seaweed": ("Rhodophyta", None),
+    "turtles": ("Testudines", "CLASS"),
+    "cetaceans": ("Cetacea", "ORDER"),
+    "seals": ("Pinnipedia", "FAMILY"),
+    "sea_snakes": ("Hydrophiidae", "FAMILY"),
+    # Dugongidae was dugongs only — manatees are Trichechidae. The order covers both.
+    "dugongs_manatees": ("Sirenia", "ORDER"),
+    "sponges": ("Porifera", "PHYLUM"),
+    # Ascidiacea is sea squirts only; Thaliacea and Appendicularia are the pelagic
+    # tunicates — salps and larvaceans — that a diver meets as jelly-like chains.
+    "tunicates": ([("Ascidiacea", "CLASS"), ("Thaliacea", "CLASS"),
+                   ("Appendicularia", "CLASS")], "CLASS"),
+    "bryozoans": ("Bryozoa", "PHYLUM"),
+    # "Worms" is not a taxon. Restricting to Annelida dropped ribbon worms, peanut
+    # worms and arrow worms — all of them worm-shaped things a diver photographs.
+    "worms": ([("Annelida", "PHYLUM"), ("Nemertea", "PHYLUM"),
+               ("Sipuncula", "PHYLUM"), ("Chaetognatha", "PHYLUM")], "PHYLUM"),
+    # Scyphozoa is true jellyfish only. Box jellies are Cubozoa, comb jellies a separate
+    # phylum, and the hydrozoans include the siphonophores (Portuguese man o' war).
+    "jellyfish": ([("Scyphozoa", "CLASS"), ("Cubozoa", "CLASS"),
+                   ("Hydrozoa", "CLASS"), ("Ctenophora", "PHYLUM")], None),
+    # Rhodophyta was red algae only, silently excluding kelp and sea lettuce.
+    "algae_seaweed": ([("Rhodophyta", "PHYLUM"), ("Ochrophyta", "PHYLUM"),
+                       ("Chlorophyta", "PHYLUM")], "PHYLUM"),
     # Land groups, so every choice in the app's group selector has a GBIF answer.
-    "birds": ("Aves", None),
-    "insects": ("Insecta", None),
-    "spiders": ("Arachnida", None),
-    "mammals": ("Mammalia", None),
-    "reptiles": ("Squamata", None),
+    "birds": ("Aves", "CLASS"),
+    "insects": ("Insecta", "CLASS"),
+    "spiders": ("Arachnida", "CLASS"),
+    "mammals": ("Mammalia", "CLASS"),
+    "reptiles": ("Squamata", "ORDER"),
     "amphibians": ("Amphibia", "CLASS"),   # needs the rank hint, see below
-    "plants": ("Plantae", None),
-    "fungi": ("Fungi", None),
-    "snails_slugs": ("Gastropoda", None),
-    "clams": ("Bivalvia", None),
+    "plants": ("Plantae", "KINGDOM"),
+    "fungi": ("Fungi", "KINGDOM"),
+    "snails_slugs": ("Gastropoda", "CLASS"),
+    "clams": ("Bivalvia", "CLASS"),
 }
 
 # Why several of these names are NOT the obvious ones. GBIF's /species/match
@@ -268,11 +295,18 @@ def resolve_taxon_key(name: str, rank: str | None = None
     ANCESTOR's key instead ("Sirenia" -> Mammalia, "Reptilia" -> Chordata, both
     verified). Accepting those would silently widen a group filter to an entire
     class or phylum, so they are rejected here rather than used.
+
+    An EXACT answer can still be the wrong KIND of taxon: "Crustacea" matches a GENUS
+    keyed 10996236 and "Tunicata" a GENUS keyed 10971194 — real genera whose names
+    collide with the group words. A group filter at genus rank would silently restrict
+    a whole group to one genus, so genus and below are rejected too.
     """
     ck = f"{name}|{rank or ''}"
     cache = _load_cache()
     if ck in cache:
         e = cache[ck]
+        if str(e.get("rank") or "").upper() in BAD_RANKS:
+            return None, e.get("label", name)
         return e.get("key"), e.get("label", name)
 
     params = {"name": name, "strict": "false"}
@@ -283,6 +317,8 @@ def resolve_taxon_key(name: str, rank: str | None = None
     mt = d.get("matchType")
     if mt != "EXACT" or not key:
         # NONE: unknown. HIGHERRANK: an ancestor, i.e. wrong. Either way, no filter.
+        key = None
+    elif str(d.get("rank") or "").upper() in BAD_RANKS:
         key = None
     resolved = d.get("scientificName") or name
     cache[ck] = {"key": key, "label": resolved, "matchType": mt,
@@ -436,7 +472,15 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
             wanted = [w for w in wanted if w]
             if wanted:
                 for one in wanted:
-                    k, resolved = resolve_taxon_key(one, rank)
+                    # An entry may carry its own rank, because a group's members can sit
+                    # at different ranks: Scyphozoa is a CLASS, Ctenophora a PHYLUM, so
+                    # "jellyfish" cannot share one hint.
+                    if isinstance(one, (list, tuple)):
+                        oname = one[0]
+                        orank = one[1] if len(one) > 1 else rank
+                    else:
+                        oname, orank = one, rank
+                    k, resolved = resolve_taxon_key(oname, orank)
                     if k:
                         group_keys.append((k, resolved))
                 if group_keys:

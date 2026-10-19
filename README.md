@@ -165,6 +165,36 @@ GBIF: 14,953 occurrence records | ~100 km around 13.715,120.896
 - The count label names the taxon, e.g. `541 candidates — Nudibranchia`, so you can
   see the filter is applied.
 
+#### Groups are deliberately broad
+
+A candidate list that silently excludes the right answer gives the model a **zero**
+chance of finding it, and no ranking can recover that. So every group maps to the
+widest taxon that GBIF will accept, and where no single key covers a group the
+queries are unioned:
+
+```
+crustaceans   Malacostraca + Maxillopoda + Copepoda + Branchiopoda + Ostracoda + Remipedia
+worms         Annelida + Nemertea + Sipuncula + Chaetognatha
+jellyfish     Scyphozoa + Cubozoa + Hydrozoa + Ctenophora
+tunicates     Ascidiacea + Thaliacea + Appendicularia
+algae_seaweed Rhodophyta + Ochrophyta + Chlorophyta
+```
+
+Earlier versions quietly mapped *crustaceans* to `Decapoda` (crabs only) and
+*echinoderms* to `Asteroidea` (starfish only). At Anilao, 0–40 m that returned **39**
+echinoderm species against **192** for the phylum, and **159** crustaceans against
+**220** — mantis shrimps, krill, barnacles and isopods were all unreachable.
+
+Two GBIF traps make this less obvious than it sounds: `Crustacea` and `Tunicata` each
+match a real **genus** of that name, and several natural broad names do not exist in
+the backbone at all (`Heterobranchia`, `Chondrichthyes`, `Actinopterygii`, `Teleostei`,
+`Sacoglossa`). Genus- and species-rank matches are therefore rejected outright, not
+just non-`EXACT` ones.
+
+If in doubt, choose **`no group — I don't know`**: that applies no taxon filter and
+returns everything recorded near you. A longer list costs a little ranking accuracy;
+a short wrong list costs the identification.
+
 ### `Marine list…` — your own curated list, offline
 
 **The name lists are not shipped here** — they are derived from *MarineLife Keywords
