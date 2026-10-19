@@ -197,13 +197,39 @@ habitat, and ranks species by **how often they have been recorded there**.
 
 ```
 GBIF: 14,173 occurrence records | ~100 km around 13.715,120.896
-      | taxon Nudibranchia | depth 0-40 m | 393 species
+      | taxon Nudibranchia | 541 species
 ```
 
 (Occurrence counts grow as GBIF receives records, so the record total will not match
-exactly; the species count for a fixed area and filter is much steadier. With no depth
-filter the same area returns 541 species — depth only ever *subtracts*, because it
-selects records that happen to carry a depth reading.)
+exactly; the species count for a fixed area and filter is much steadier.)
+
+#### There are no depth bands, on purpose
+
+GBIF has no habitat switch: `isMarine`, `habitat` and `isTerrestrial` do not exist on
+`/v1/occurrence/search` and are silently ignored. What exists is `depth`, which selects
+the records that happen to **carry a depth reading**. A depth filter can therefore only
+ever subtract, and it subtracts in two very different ways:
+
+| Anilao, 100 km | any depth | underwater only | + a 0–40 m band |
+|---|---|---|---|
+| nudibranchs | 541 | 398 | 393 |
+| crustaceans | 1,672 | 1,100 | 220 |
+| echinoderms | 668 | 533 | 192 |
+| corals & anemones | 458 | 197 | 63 |
+
+- **Records with no depth value are dropped by any depth filter.** 143 of the 541
+  nudibranch species at Anilao are recorded there with no depth at all. They are not deep
+  animals — their records lack the field.
+- **Species recorded only deeper than the band are dropped too.** Small for nudibranchs
+  (5 species), but at the same site **880 of 1,672 crustacean species and 341 of 668
+  echinoderm species are recorded only below 40 m**. A 0–40 m band would show 220
+  crustaceans out of 1,672, which reads as "the list is broken" when in fact the filter
+  is doing exactly what it was asked.
+
+So the selector offers just two choices — **any (land + underwater)** and **underwater
+only** — and `any` is the default and the recommended one: it is the most complete list,
+and the group selector already keeps the taxa right. Narrowing by *taxon*, broadly, is
+safe; narrowing by *depth* is not.
 
 - **No account or API key required.**
 - **Loading replaces the list** (there is an `add to list` checkbox if you want to

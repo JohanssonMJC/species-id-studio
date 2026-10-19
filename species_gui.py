@@ -890,12 +890,13 @@ class MainWindow(QMainWindow):
             "COMPLETE list. Use it: the group selector already keeps the taxa right, "
             "and depth can only subtract.\n"
             "• underwater only — only records that carry a depth reading. Measured at "
-            "Anilao on nudibranchs: 399 species instead of 542, because many marine "
-            "records simply have no depth recorded. Depth presence is metadata, not "
+            "Anilao on nudibranchs: 398 species instead of 541, because 143 of them have "
+            "no depth recorded at all. Depth presence is metadata, not "
             "habitat.\n\n"
-            "Why not depth bands? A 0-40 m band gave 394 species and lost five "
-            "mesophotic ones (Halgerda scripta, H. mesophotica, H. profunda) — every "
-            "band subtracts real animals.")
+            "Why no depth bands? Because the deep half is large and would vanish: at "
+            "Anilao a 0-40 m band returns 220 of 1,672 crustacean species, 192 of 668 "
+            "echinoderms, 393 of 541 nudibranchs — 880 crustacean species there are "
+            "recorded ONLY below 40 m. Use any depth and narrow by taxon instead.")
         r2.addWidget(self.depth)
         cl.addLayout(r2)
 
