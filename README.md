@@ -10,8 +10,10 @@ Two engines work together:
   is not in the list, which is the point: you constrain the answer space instead of
   trusting a fixed label set.
 - **Tier 2 — a local vision LLM (optional).** A second opinion that describes
-  diagnostic features and argues for a species. Kept independent of Tier 1 by default
-  (see [Two opinions, not one](#two-opinions-not-one)).
+  diagnostic features and argues for a species. **Any vision model your `llama.cpp`
+  build supports works** — `Qwen3-VL` is only the tested default, see
+  [Choosing a vision model](#choosing-a-vision-model). Kept independent of Tier 1 by
+  default (see [Two opinions, not one](#two-opinions-not-one)).
 
 Around that sits the part that actually decides accuracy: **where the candidate list
 comes from**. A photo can only be identified against names you give it.
@@ -123,6 +125,35 @@ at roughly 0.3 s per photo.
 `open_clip_config.json` + `open_clip_model.safetensors`. If loading fails, that pair is
 the first thing to check.
 
+### Choosing a vision model
+
+Nothing in the code is specific to one model. Drop a weights file and its projector into
+`~/Models` and the app finds the pair, so the vision picker offers it:
+
+```
+~/Models/<anything>/
+    <model>.gguf        # the language model
+    mmproj-*.gguf       # its vision projector — REQUIRED, and must match the model
+```
+
+It works because the conversation is plain: one photo, one written question. There is no
+model-specific prompt engineering to break. Two things do change between models:
+
+- **Which architectures are loadable.** That is decided by your `llama.cpp` build, not by
+  this app. The `tools/mtmd/models/` directory in your checkout lists exactly what your
+  build can project. A model whose architecture is missing fails at load.
+- **How much memory it wants.** Model and projector must both fit in GPU memory. A dense
+  30B on an integrated GPU is slow for a single-photo question even when it fits, where a
+  mixture-of-experts model of the same size is far faster — only a fraction of its
+  parameters are read per token.
+
+Measured sizes (Q4, weights plus projector): `Qwen3-VL-8B` ≈ 5.4 GB,
+`Qwen3-VL-30B-A3B` ≈ 17.5 GB, `Kimi-VL-A3B-Thinking` ≈ 10.4 GB,
+`Qwen3-VL-32B` (dense) ≈ 19.5 GB.
+
+The projector must match the model. An `mmproj` from a different family can load and
+produce nonsense, which is worse than refusing to start.
+
 ---
 
 ## Quick start
@@ -221,6 +252,18 @@ Any plain text list. Comments (`#`) and blank lines are ignored.
 
 `Ask vision model` sends the photo to the local vision LLM. By default it is **blind**
 to BioCLIP's answer, and that is deliberate.
+
+The answer lands in the *Vision model reasoning* tab as plain text you own: select any
+part and press `Ctrl+C`, or right-click for **Copy selection**, **Copy whole answer**,
+and — when the selection looks like a binomial — direct links to look that name up in
+iNaturalist, GBIF or Google Images. The model writes prose rather than rows, so a name
+it mentions in passing is exactly what you want to check.
+
+The answer lands in the *Vision model reasoning* tab, and it is plain text you own:
+select any part and press `Ctrl+C`, or right-click for **Copy selection**, **Copy whole
+answer**, and — when the selection looks like a binomial — direct links to look that
+name up in iNaturalist, GBIF or Google Images. The model writes prose rather than rows,
+so a name it mentions in passing is exactly what you want to check.
 
 Observed in real use: BioCLIP put the correct species at rank 10 of ~540, and a vision
 model that had been shown a candidate list simply restated rank 1 — which was wrong.
@@ -397,7 +440,9 @@ Stated plainly, because each one is a silent-wrong-answer if you do not know abo
   queried live.
 - **BioCLIP 2** — image encoder from the BioCLIP project (Stevens et al., CVPR 2024;
   BioCLIP 2: Gu et al.). Check the model card for its licence before redistribution.
-- **Qwen3-VL** — vision-language model by Alibaba Qwen, Apache-2.0.
+- **Qwen3-VL** — vision-language model by Alibaba Qwen, Apache-2.0. This is the
+  **tested default for Tier 2, not a dependency**: any vision model your `llama.cpp`
+  build supports can be used instead, and its licence is then yours to check.
 - **MarineLife Keywords 1.0** (2009) — *MarineLife Keywords* was used to guide the
   marine candidate lists this project was developed against. **Neither the product nor
   any file derived from it is included in this repository.** `make_marine_lists.py` can

@@ -1107,6 +1107,18 @@ class MainWindow(QMainWindow):
         self.reason = QTextBrowser()
         self.reason.setPlaceholderText(
             "Ask the vision model for diagnostic features and a second opinion.")
+        # Selectable with mouse and keyboard; Ctrl+C then copies the selection. The
+        # context menu adds what Ctrl+C cannot do — take the WHOLE answer in one go, and
+        # follow a name mentioned in the prose out to iNaturalist/GBIF/Images — because
+        # the model writes its findings as free text, not as rows.
+        self.reason.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self.reason.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.reason.customContextMenuRequested.connect(self._reason_menu)
+        self.reason.setToolTip(
+            "Select text and press Ctrl+C to copy it, or right-click to copy the whole "
+            "answer / look a name up online.")
         tab.addTab(self.reason, "Vision model reasoning")
 
         # --- batch results + export ---
@@ -2189,6 +2201,60 @@ class MainWindow(QMainWindow):
             lambda: QDesktopServices.openUrl(
                 QUrl(f"https://www.google.com/search?tbm=isch&q={name.replace(' ', '+')}")))
         m.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _copy_text(self, text: str) -> None:
+        """Put arbitrary text on the clipboard and say how much went."""
+        if not text:
+            return
+        QGuiApplication.clipboard().setText(text)
+        lines = text.count("\n") + 1
+        self.statusBar().showMessage(
+            f"copied {len(text):,} characters ({lines} line"
+            f"{'s' if lines != 1 else ''}) to the clipboard", 12000)
+
+    def _reason_menu(self, pos) -> None:
+        """Copy / look-up affordances for the vision model's answer.
+
+        Ctrl+C already copies a selection, but there was no way to take the whole
+        response, and no way to follow a species name the model mentioned in prose out to
+        a reference page. Treat the selected text — or the word under the cursor when
+        nothing is selected — as the name to look up.
+        """
+        cur = self.reason.textCursor()
+        selected = cur.selectedText().replace("\u2029", "\n").strip()
+        if not selected:
+            probe = QTextCursor(cur)
+            probe.select(QTextCursor.SelectionType.WordUnderCursor)
+            selected = probe.selectedText().strip()
+        full = self.reason.toPlainText()
+        self._build_reason_menu(selected, full).exec(self.reason.mapToGlobal(pos))
+
+    def _build_reason_menu(self, selected: str, full: str) -> QMenu:
+        """The vision pane's menu, separated from exec() so it can be tested."""
+        m = QMenu(self)
+        a_sel = m.addAction("Copy selection"
+                            + (f"  ({len(selected)} chars)" if selected else ""))
+        a_sel.setEnabled(bool(selected))
+        a_sel.triggered.connect(lambda: self._copy_text(selected))
+        a_all = m.addAction(f"Copy whole answer  ({len(full):,} chars)")
+        a_all.setEnabled(bool(full.strip()))
+        a_all.triggered.connect(lambda: self._copy_text(full))
+
+        # Only offer the lookups when the text could plausibly be a name: a single
+        # sentence or a whole paragraph is not something you can search a taxon by.
+        if selected and 2 < len(selected) < 60 and "\n" not in selected:
+            m.addSeparator()
+            q = selected.replace(" ", "+")
+            m.addAction(f"Open “{selected}” in iNaturalist (browser)").triggered.connect(
+                lambda: QDesktopServices.openUrl(
+                    QUrl(f"https://www.inaturalist.org/search?q={q}")))
+            m.addAction(f"Open “{selected}” in GBIF (browser)").triggered.connect(
+                lambda: QDesktopServices.openUrl(
+                    QUrl(f"https://www.gbif.org/species/search?q={q}")))
+            m.addAction(f"Search images for “{selected}”").triggered.connect(
+                lambda: QDesktopServices.openUrl(
+                    QUrl(f"https://www.google.com/search?tbm=isch&q={q}")))
+        return m
 
     def _preview_photo(self, path: str) -> None:
         """Show a photo without the side effects of load_photo().
