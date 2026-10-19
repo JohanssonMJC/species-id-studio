@@ -1188,6 +1188,11 @@ class MainWindow(QMainWindow):
         if avail is None or avail.width() <= 0:
             self.resize(want_w, want_h)
             return
+        # Hard ceiling: nothing may push the window past the desktop. Any child whose
+        # minimum width grows with its content — a button that embeds its state in its
+        # own label did exactly that, +92 px — otherwise drags the window off-screen,
+        # because Qt honours a minimum size over the requested size.
+        self.setMaximumSize(avail.width(), avail.height())
         w = min(want_w, max(640, avail.width() - 40))
         h = min(want_h, max(480, avail.height() - 80))
         self.resize(w, h)
@@ -1622,12 +1627,20 @@ class MainWindow(QMainWindow):
 
         A disabled button that looks identical to an enabled one is what produced
         "I click on GBIF but it says iNat, GBIF Online" — the button was inert and the
-        only clue was a checkbox label. Label the state on the button itself.
+        only clue was a checkbox label. Say why, but NOT in the button text: the text
+        "Place list (GBIF) — needs Online" is 193 px against 101 px for the plain
+        label, and that 92 px swing inflated the button row, the left pane and the
+        whole window's minimum width every time Online was toggled — which is exactly
+        when the window was seen to grow past the screen edge. Disabled state plus a
+        tooltip carries the same information at a constant width.
         """
         on = self.online_chk.isChecked()
         self.gbif_btn.setEnabled(on)
-        self.gbif_btn.setText("Place list (GBIF)" if on
-                              else "Place list (GBIF) — needs Online")
+        self.gbif_btn.setText("Place list (GBIF)")
+        self.gbif_btn.setToolTip(
+            "Species recorded near the search area, from GBIF. Needs “Online features”."
+            if not on else
+            "Species recorded near the search area, from GBIF occurrences.")
         if hasattr(self, "find_btn"):
             self.find_btn.setEnabled(on)
 

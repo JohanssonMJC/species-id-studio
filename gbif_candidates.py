@@ -45,11 +45,23 @@ CACHE = Path.home() / ".cache" / "species_studio" / "gbif_keys.json"
 GROUP_TAXA = {
     "nudibranchs": ("Nudibranchia", None),
     "sea_slugs": ("Nudibranchia", None),
-    "crustaceans": ("Decapoda", None),
+    # Crustacea is NOT a usable taxon in the GBIF backbone: `species/match?name=Crustacea`
+    # returns an exact match on a GENUS keyed 10996236 — a genus literally named
+    # "Crustacea" — and "Isopoda" answers HIGHERRANK -> Arthropoda. Crustacea is
+    # paraphyletic, so no single key covers it. Mapping this group to Decapoda (as it
+    # was) silently restricted it to crabs, shrimps and lobsters: at Anilao, 0-40 m that
+    # returned 233 species where the crustaceans actually recorded there number ~311,
+    # because amphipods, isopods, krill, mantis shrimps, copepods and barnacles were all
+    # excluded. Union the classes instead — the keys below were read from GBIF by
+    # matching real species of each (barnacles resolve to Maxillopoda, not Thecostraca).
+    "crustaceans": (["Malacostraca", "Maxillopoda", "Copepoda", "Branchiopoda",
+                     "Ostracoda", "Remipedia"], "CLASS"),
     "crabs_shrimps": ("Decapoda", None),
     "cephalopods": ("Cephalopoda", None),
     "corals_anemones": ("Anthozoa", None),
-    "echinoderms": ("Asteroidea", None),
+    # Asteroidea is starfish only. "echinoderms" in the marine lists means the phylum:
+    # starfish, sea urchins, sea cucumbers, brittle stars and feather stars.
+    "echinoderms": ("Echinodermata", "PHYLUM"),
     "sea_cucumbers": ("Holothuroidea", None),
     "sharks_rays": ("Elasmobranchii", None),
     "bony_fishes": (None, None),
@@ -407,6 +419,7 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
     # passing an iNat spec straight through silently dropped the filter.
     label = "all taxa"
     unfiltered_group = None
+    group_keys: list[tuple[int, str]] = []
     if taxon_key is None and group:
         # Branch explicitly rather than with a ternary: `group in GROUP_TAXA` is
         # evaluated before any isinstance guard inside a conditional expression,
@@ -417,9 +430,21 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
             gname = group_from_spec(group)
         if gname and gname in GROUP_TAXA:
             tname, rank = GROUP_TAXA[gname]
-            if tname:
-                taxon_key, resolved = resolve_taxon_key(tname, rank)
-                label = resolved if taxon_key else f"{gname} (no GBIF filter)"
+            # A group may need SEVERAL taxa to cover it (Crustacea has no single key).
+            # Union them; every one must still resolve EXACT or it is dropped.
+            wanted = tname if isinstance(tname, (list, tuple)) else [tname]
+            wanted = [w for w in wanted if w]
+            if wanted:
+                for one in wanted:
+                    k, resolved = resolve_taxon_key(one, rank)
+                    if k:
+                        group_keys.append((k, resolved))
+                if group_keys:
+                    taxon_key = group_keys[0][0]
+                    label = (group_keys[0][1] if len(group_keys) == 1 else
+                             f"{gname}: " + " + ".join(r for _, r in group_keys))
+                else:
+                    label = f"{gname} (no GBIF filter)"
             else:
                 # Name the group the user actually chose. Reporting "all taxa" here
                 # was misleading: they picked fishes, so say the filter is absent,
@@ -430,7 +455,13 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
         # ancestor filter is worse than none.
     elif taxon_key is not None:
         label = str(taxon_key)
-    if taxon_key is not None:
+    multi = len(group_keys) > 1
+    if multi:
+        # One query per key: `taxonKey` cannot take several values — repeated, comma-
+        # separated and list forms all return 0, which is indistinguishable from
+        # "nothing recorded here". So union separate queries instead.
+        bits.append(f"taxon {label}")
+    elif taxon_key is not None:
         params["taxonKey"] = taxon_key
         bits.append(f"taxon {label}")
     elif group:
@@ -445,10 +476,26 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
     # people happened to dive there, not seasonality — and it fails silently, since a
     # 2-species answer reads as "not much here" rather than "filter too tight".
 
-    d = _get("occurrence/search", **params)
-    facets = d.get("facets") or []
-    counts = facets[0]["counts"] if facets else []
     requested = facet_limit
+    counts: list[dict] = []
+    total = 0
+    capped = False
+    if multi:
+        for k, _r in group_keys:
+            p = dict(params)
+            p["taxonKey"] = k
+            d = _get("occurrence/search", **p)
+            total += d.get("count", 0)
+            fs = (d.get("facets") or [{}])[0].get("counts", []) or []
+            counts.extend(fs)
+            if len(fs) >= requested:
+                capped = True
+    else:
+        d = _get("occurrence/search", **params)
+        facets = d.get("facets") or []
+        counts = facets[0]["counts"] if facets else []
+        total = d.get("count", 0)
+        capped = len(counts) >= requested
     names, seen = [], set()
     for c in counts:
         n = strip_authority(c["name"])
@@ -473,10 +520,8 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
             bits.append(f"restricted to your {len(allowed):,} {unfiltered_group} names "
                         f"(dropped {before - len(names)} that are not in it)")
 
-    total = d.get("count", 0)
-    # If the facet filled up, there are more species than were returned. Say so —
-    # silent truncation is the failure mode that matters here.
-    capped = len(counts) >= requested
+    # total and capped are set by the query above: summed across keys when a group
+    # needed several taxa, and capped if ANY of those queries hit the facet limit.
     info = (f"GBIF: {total:,} occurrence records | " + " | ".join(bits)
             + f" | {len(names)} species")
     if capped:

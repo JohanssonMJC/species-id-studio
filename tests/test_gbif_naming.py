@@ -83,6 +83,32 @@ check("lon range brackets the point", lo0 < 120.93 < lo1, lon_r)
 check("0.27 deg of latitude for 30 km", abs((la1 - la0) - 0.5389) < 0.01, f"{la1-la0:.4f}")
 check("longitude widened to keep the radius", (lo1 - lo0) > (la1 - la0))
 
+print("\n9. a group may need SEVERAL taxa, and crustaceans does")
+# Crustacea has no usable key in the backbone: species/match?name=Crustacea matches a
+# GENUS (10996236) and Isopoda answers HIGHERRANK -> Arthropoda. The group was mapped to
+# Decapoda alone, which restricted it to crabs/shrimps/lobsters — at Anilao, 0-40 m that
+# returned 159 species where the union returns 220, losing mantis shrimps, krill,
+# barnacles and isopods. The mapping must stay a union of crustacean classes.
+crus, cr_rank = GC.GROUP_TAXA["crustaceans"]
+check("crustaceans maps to several taxa", isinstance(crus, (list, tuple)) and len(crus) >= 5,
+      str(crus))
+check("crustaceans is not Decapoda-only", "Decapoda" not in (crus if isinstance(crus, (list, tuple)) else [crus]),
+      str(crus))
+check("crustacean classes carry a rank hint", cr_rank == "CLASS", str(cr_rank))
+check("Malacostraca included", "Malacostraca" in crus, str(crus))
+check("barnacle class included (Maxillopoda)", "Maxillopoda" in crus, str(crus))
+check("copepods included", "Copepoda" in crus, str(crus))
+check("'Crustacea' is never used as the taxon name",
+      "Crustacea" not in crus, str(crus))
+
+print("\n10. echinoderms means the phylum, not starfish")
+# Asteroidea is starfish only; the marine lists mean the phylum (urchins, cucumbers,
+# brittle stars, feather stars).
+echo_name, echo_rank = GC.GROUP_TAXA["echinoderms"]
+check("echinoderms maps to the phylum", echo_name == "Echinodermata", str(echo_name))
+check("echinoderms uses a phylum rank hint", echo_rank == "PHYLUM", str(echo_rank))
+check("echinoderms is not Asteroidea-only", echo_name != "Asteroidea", str(echo_name))
+
 print()
 if FAILS:
     print(f"GBIF NAMING RULES: {len(FAILS)} FAILURE(S): {FAILS}")
