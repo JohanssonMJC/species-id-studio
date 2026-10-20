@@ -304,12 +304,6 @@ and — when the selection looks like a binomial — direct links to look that n
 iNaturalist, GBIF or Google Images. The model writes prose rather than rows, so a name
 it mentions in passing is exactly what you want to check.
 
-The answer lands in the *Vision model reasoning* tab, and it is plain text you own:
-select any part and press `Ctrl+C`, or right-click for **Copy selection**, **Copy whole
-answer**, and — when the selection looks like a binomial — direct links to look that
-name up in iNaturalist, GBIF or Google Images. The model writes prose rather than rows,
-so a name it mentions in passing is exactly what you want to check.
-
 Observed in real use: BioCLIP put the correct species at rank 10 of ~540, and a vision
 model that had been shown a candidate list simply restated rank 1 — which was wrong.
 A second opinion is only worth asking for if it is independent.
