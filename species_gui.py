@@ -915,6 +915,9 @@ class MainWindow(QMainWindow):
         self.last_candidates: list[str] = []
         self.last_ranking: list[tuple[str, float]] = []
         self.last_ranking_path: str | None = None
+        # which photo the vision pane's answer belongs to (see _update_reason_caption)
+        self.reason_for_path: str | None = None
+        self._reason_asked_for: str | None = None
         self.vision = VisionServer(int(cfg.get("vision_port") or VISION_PORT),
                                    cfg.get("vision_model"), cfg.get("vision_mmproj"))
         self.worker = None
@@ -1221,9 +1224,19 @@ class MainWindow(QMainWindow):
         r.addWidget(self.ident_btn, 2)
         self.ask_btn = QPushButton("Ask vision model")
         self.ask_btn.setMinimumHeight(34)
+        # Which photo the answer in the reasoning pane belongs to. Without this the pane
+        # kept the previous photo's answer next to a fresh BioCLIP result, which reads as
+        # "the vision model ran by itself" — it had not.
+        self.reason_for_lbl = QLabel("no vision answer yet")
+        self.reason_for_lbl.setStyleSheet("color:#6b7280;")
+        self.reason_for_lbl.setWordWrap(True)
+        self.reason_for_lbl.setMinimumWidth(0)
+        self.reason_for_lbl.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                          QSizePolicy.Policy.Preferred)
         self.ask_btn.clicked.connect(self.ask_vision)
         r.addWidget(self.ask_btn, 1)
         v.addLayout(r)
+        v.addWidget(self.reason_for_lbl)
 
         # Off by default: a second opinion is only worth asking for if it is
         # INDEPENDENT. Showing the model BioCLIP's list turns it into a ratifier —
@@ -1525,6 +1538,7 @@ class MainWindow(QMainWindow):
             self.load_photo(p)
 
     def load_photo(self, path: str) -> None:
+        self._forget_reason_for_new_photo(path)
         self.image_path = path
         self.cfg["last_dir"] = str(Path(path).parent)
         save_cfg(self.cfg)
@@ -2092,6 +2106,41 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(
                 f"https://www.inaturalist.org/search?q={name}"))
 
+    # -- vision answer ownership ------------------------------------------- #
+    def _update_reason_caption(self) -> None:
+        """Say which photo the reasoning pane belongs to, and mark a stale answer.
+
+        The pane is not tied to a photo by the widget itself, so switching photos used to
+        leave the previous answer sitting there. Seen from the outside that reads as "the
+        vision model ran automatically", when nothing had been asked for the new photo.
+        """
+        cur = getattr(self, "image_path", None)
+        owner = getattr(self, "reason_for_path", None)
+        if not owner:
+            self.reason_for_lbl.setText("no vision answer for this photo yet")
+            self.reason_for_lbl.setStyleSheet("color:#6b7280;")
+            return
+        name = Path(owner).name
+        if cur and owner == cur:
+            self.reason_for_lbl.setText(f"answer for this photo: {name}")
+            self.reason_for_lbl.setStyleSheet("color:#047857;")
+        else:
+            self.reason_for_lbl.setText(
+                f"STALE — this answer was for {name}, not the photo shown. "
+                f"Ask again for the current one.")
+            self.reason_for_lbl.setStyleSheet("color:#b45309; font-weight:600;")
+
+    def _forget_reason_for_new_photo(self, new_path: str | None) -> None:
+        """A different photo means the old answer must not sit beside the new result."""
+        old = getattr(self, "reason_for_path", None)
+        if old and old != new_path and self.reason.toPlainText().strip():
+            self.reason.setPlainText(
+                f"[cleared] The previous answer was for {Path(old).name}.\n\n"
+                f"Nothing has been asked about {Path(new_path).name if new_path else 'this photo'} "
+                f"yet — press “Ask vision model” if you want a second opinion on it.")
+            self.reason_for_path = None
+        self._update_reason_caption()
+
     # -- teaching a photo a label ------------------------------------------ #
     def teach_current(self, species: str | None) -> None:
         """Record this photo as a labelled example of `species`.
@@ -2517,6 +2566,7 @@ class MainWindow(QMainWindow):
         # answer, so they are always included (unlike the candidate list, which is
         # opt-in because it leaks BioCLIP's pick).
         prompt += self._context_for_vision()
+        self._reason_asked_for = self.image_path
         self.ask_btn.setEnabled(False)
         self.prog.setFormat("vision model thinking…")
         self.reason.setPlainText("…thinking")
@@ -2537,6 +2587,9 @@ class MainWindow(QMainWindow):
         self.ask_btn.setEnabled(True)
         self.prog.setFormat(f"done — {el:.0f}s")
         self.reason.setPlainText(text)
+        self.reason_for_path = (getattr(self, '_reason_asked_for', None)
+                                or self.image_path)
+        self._update_reason_caption()
         self.log.appendPlainText(f"vision model answered in {el:.0f}s ({len(text)} chars)")
         self._cross_check_vision(text)
 
@@ -2858,6 +2911,7 @@ class MainWindow(QMainWindow):
         pm = QPixmap(path)
         if pm.isNull():
             return
+        self._forget_reason_for_new_photo(path)
         self.image_path = path
         self.view.setPixmap(pm.scaled(self.view.size(),
                                       Qt.AspectRatioMode.KeepAspectRatio,
