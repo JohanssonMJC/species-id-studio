@@ -453,6 +453,8 @@ class BioClipWorker(QThread):
                     out["personal"] = personal_classifier.classify(
                         out["features"], P, labels, top_k=self.top_k,
                         use_centroids=self.use_centroids)
+                    # what was actually scored: the label arm must not answer outside it
+                    out["scope"] = {c.strip() for c in self.candidates if c.strip()}
                 except Exception as exc:                  # never lose the text ranking
                     out["personal_error"] = f"{type(exc).__name__}: {exc}"
             out["seconds"] = time.time() - t0
@@ -857,7 +859,9 @@ class BatchWorker(QThread):
             self.row.emit({
                 "photo": str(f), "name": f.name, "meta": meta,
                 "candidate_source": source, "candidates": len(cands),
-                "ranked": ranked, "personal": person, "seconds": time.time() - t0,
+                "ranked": ranked, "personal": person,
+                "scope": {c.strip() for c in cands if c.strip()},
+                "seconds": time.time() - t0,
                 "error": None,
             })
             done += 1
@@ -2229,14 +2233,19 @@ class MainWindow(QMainWindow):
         self.prog.setFormat(f"done — {out.get('seconds',0):.1f}s")
         ranked = out.get("ranked", [])
         personal = out.get("personal")
-        # Labels first, text ranking filling the rest — each row says which produced it,
-        # because they are not equally trustworthy and the difference is the whole point
-        # of fitting on your own photos.
+        # The candidate list IS the question being asked. A label answer for a species
+        # outside it answers a different question — a nudibranch at rank 1 under "reef &
+        # bony fishes" — so scope is passed and out-of-scope answers are logged, not ranked.
+        scope = out.get("scope")
         rows = (personal_classifier.merge_with_text(personal, ranked,
-                                                    top_k=max(len(ranked), 1))
+                                                    top_k=max(len(ranked), 1), scope=scope)
                 if personal_classifier is not None else
                 [{"name": r["name"], "score": r["score"], "source": "text",
                   "confidence": "text"} for r in ranked])
+        note = (personal_classifier.scope_note(personal, scope)
+                if personal_classifier is not None else "")
+        if note:
+            self.log.appendPlainText(note)
         self.table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
@@ -2279,16 +2288,22 @@ class MainWindow(QMainWindow):
             self.log.appendPlainText(
                 f"Personal classifier failed on this photo, text ranking unaffected: "
                 f"{out['personal_error']}")
-        elif personal:
+        elif personal and any(r["source"] == "your labels" for r in rows):
+            # Only describe the label arm when it was actually used. Saying "Your labels:
+            # Nembrotha chamberlaini — confident" while the same log line says it was
+            # excluded for being outside the group is two contradictory statements.
             margin = personal.get("margin", 0.0)
             verdict = {"confident": "confident", "uncertain": "UNCERTAIN",
                        "weak": "WEAK"}.get(personal.get("confidence"), "?")
+            where = ("as the top row" if rows and rows[0]["source"] == "your labels"
+                     else "below the text top — it is too weak to lead")
             self.log.appendPlainText(
-                f"Your labels: {personal.get('top')} — {verdict}, margin {margin:.3f}\n"
+                f"Your labels: {personal.get('top')} — {verdict}, margin {margin:.3f}, "
+                f"{where}\n"
                 f"  a margin under {personal_classifier.CONFIDENT_MARGIN} means the "
                 f"closest label is not clearly better than another, so check it; the "
-                f"ranked rows below it come from the candidate-list text ranking and "
-                f"cover species you have not labelled.")
+                f"text rows come from the candidate-list ranking and cover species you "
+                f"have not labelled.")
         self.statusBar().showMessage(f"Top pick: {top}", 20000)
 
     def _ranking_for_vision(self) -> list[tuple[str, float]]:
@@ -2506,6 +2521,10 @@ class MainWindow(QMainWindow):
         meta = r.get("meta") or {}
         ranked = r.get("ranked") or []
         person = r.get("personal") or None
+        scope = r.get("scope")
+        if person and scope is not None and person.get("ranked") \
+                and person["ranked"][0][0] not in scope:
+            person = None          # answered outside the group that was asked for
         top = ranked[0] if ranked else None
         # The label answer leads the row when there is one: it is the more accurate arm on
         # species the user has labelled, and a batch run is where that matters most.
@@ -2751,6 +2770,9 @@ class MainWindow(QMainWindow):
         meta = r.get("meta") or {}
         ranked = r.get("ranked") or []
         person = r.get("personal") or {}
+        scope = r.get("scope")
+        if person.get("top") and scope is not None and person["top"] not in scope:
+            person = {}            # not written to the CSV: it is not in the group asked for
         row = {
             "photo": r.get("photo", ""),
             "filename": r.get("name", ""),

@@ -155,5 +155,55 @@ with tempfile.TemporaryDirectory() as td:
     check("example count recorded", meta["examples_per_species"]["Alpha beta"] == 2,
           meta["examples_per_species"])
 
+print("11. the label arm must not answer outside the group that was asked for")
+# Report that produced this: group "reef & bony fishes", and a nudibranch came back as
+# rank 1 because the label arm ignores the candidate list entirely.
+fish = [{"name": "Chaetodon kleinii", "score": 0.41},
+        {"name": "Amphiprion ocellaris", "score": 0.22}]
+scope = {"Chaetodon kleinii", "Amphiprion ocellaris"}
+outside = {"ranked": [("Nembrotha chamberlaini", 0.91, 0.19)], "top": "Nembrotha chamberlaini",
+           "score": 0.91, "margin": 0.19, "confidence": "confident"}
+merged = pc.merge_with_text(outside, fish, top_k=5, scope=scope)
+check("out-of-scope label answer is dropped", "Nembrotha chamberlaini" not in
+      [m["name"] for m in merged], merged)
+check("text ranking leads instead", merged[0]["name"] == "Chaetodon kleinii", merged[0])
+check("nothing is lost from the text arm", len(merged) == 2, len(merged))
+check("the log explains it", "not in the selected group" in pc.scope_note(outside, scope),
+      pc.scope_note(outside, scope))
+check("no note when the answer is in scope",
+      pc.scope_note({"ranked": [("Chaetodon kleinii", 0.9, 0.2)], "confidence": "confident"},
+                    scope) == "")
+check("no note without a scope", pc.scope_note(outside, None) == "")
+
+print("12. a WEAK label answer is shown, but not at the top")
+weak = {"ranked": [("Chromodoris annae", 0.55, 0.001)], "top": "Chromodoris annae",
+        "score": 0.55, "margin": 0.001, "confidence": "weak"}
+merged = pc.merge_with_text(weak, fish, top_k=5, scope=scope | {"Chromodoris annae"})
+check("weak answer is kept", "Chromodoris annae" in [m["name"] for m in merged], merged)
+check("text answer leads", merged[0]["source"] == "text", merged[0])
+check("weak answer sits second", merged[1]["name"] == "Chromodoris annae", merged[1])
+check("still flagged weak", merged[1]["confidence"] == "weak", merged[1])
+
+print("13. agreement between the arms is not a demotion — the row is one, attributed")
+agree_text = [{"name": "Chromodoris annae", "score": 0.40},
+              {"name": "Chaetodon kleinii", "score": 0.20}]
+merged = pc.merge_with_text(weak, agree_text, top_k=5, scope=scope | {"Chromodoris annae"})
+check("one row, not two", [m["name"] for m in merged].count("Chromodoris annae") == 1, merged)
+check("attributed to the labels", merged[0]["source"] == "your labels", merged[0])
+check("top because both arms agree", merged[0]["name"] == "Chromodoris annae", merged[0])
+
+print("14. confident and uncertain answers still lead; the switch can be turned off")
+for conf, want_lead in (("confident", True), ("uncertain", True)):
+    p = {"ranked": [("Chromodoris annae", 0.8, 0.05)], "top": "Chromodoris annae",
+         "score": 0.8, "margin": 0.05, "confidence": conf}
+    m = pc.merge_with_text(p, fish, top_k=5, scope=scope | {"Chromodoris annae"})
+    check(f"{conf} leads", (m[0]["source"] == "your labels") == want_lead, m[0])
+m = pc.merge_with_text(weak, fish, top_k=5, scope=scope | {"Chromodoris annae"},
+                       demote_weak=False)
+check("demote_weak=False restores the old order", m[0]["source"] == "your labels", m[0])
+m = pc.merge_with_text(weak, [], top_k=5, scope=scope | {"Chromodoris annae"})
+check("with no text results a weak answer is still shown", len(m) == 1 and
+      m[0]["name"] == "Chromodoris annae", m)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

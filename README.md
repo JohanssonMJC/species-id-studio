@@ -435,6 +435,28 @@ you don't, and neither alone is the right system. Text ranking also has the bett
 At one example per species they measured identically; with several examples per species the
 centroid usually wins, which is why the toggle exists rather than a hardcoded choice.
 
+### The label arm answers only inside the group you asked for
+
+The classifier scores against the candidate list — so an answer from your labels for a
+species *outside* that list answers a different question. Reported case: group "reef &
+bony fishes", and a nudibranch appeared at rank 1, pushing the correct fish to rank 2. The
+label arm ignores the candidate list by construction, so the app now passes the scored list
+as a **scope**:
+
+- the label answer is dropped from the table when its species is not in the list;
+- the log says so plainly — *"your labels recognised “Nembrotha chamberlaini” (confident,
+  margin 0.188) but that species is not in the selected group"* — because silence would hide
+  a genuine recognition;
+- the same rule applies to batch rows and to the CSV, so a group-scoped run cannot export a
+  species outside the group.
+
+**A weak label answer no longer leads.** "weak" means the closest label is not clearly
+better than another (margin < 0.03), so it is shown *below* the top text result, still
+flagged. An "uncertain" answer (0.03–0.06) still leads, flagged: a flagged candidate beats
+no candidate, but a hint that cannot distinguish two species should not be presented as the
+best available answer. When both arms name the same species there is one row, attributed to
+your labels — agreement is evidence, not a demotion.
+
 ### It flags, it does not refuse
 
 A rejection threshold cannot be made both safe and useful here. Measured with 24 verified

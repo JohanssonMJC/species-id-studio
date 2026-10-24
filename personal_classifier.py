@@ -86,26 +86,65 @@ def classify(query: np.ndarray, prototypes: np.ndarray, labels: np.ndarray,
 
 
 def merge_with_text(personal: dict | None, text_ranked: list[dict],
-                    top_k: int = 10) -> list[dict]:
+                    top_k: int = 10, scope: set[str] | None = None,
+                    demote_weak: bool = True) -> list[dict]:
     """Labels first, text ranking filling the rest. Each row names its source.
 
-    The label answer is not dropped when it is uncertain — it is shown first anyway, with
-    its confidence, because a flagged candidate still beats no candidate.
+    SCOPE. When `scope` is given — the candidate list actually scored — a label answer for
+    a species outside it is DROPPED from the ranking (it stays in the log separately). The
+    user selected "reef & bony fishes" and got a nudibranch at rank 1: the classifier
+    answered a different question from the one asked, and leading with it also pushed the
+    correct fish to rank 2.
+
+    WEAK ANSWERS DO NOT LEAD. "weak" means the closest label is not clearly better than
+    another label (margin < UNCERTAIN_MARGIN). An uncertain answer still leads, flagged,
+    because a flagged candidate beats no candidate — but a weak one is moved below the top
+    text result instead of being shown as the best available answer.
     """
     out: list[dict] = []
+    pending = None          # a weak label row, waiting to sit below the best text answer
     if personal and personal.get("ranked"):
         name, score, margin = personal["ranked"][0]
-        out.append({"name": name, "score": score, "source": "your labels",
-                    "confidence": personal["confidence"], "margin": margin})
+        if scope is None or name in scope:
+            row = {"name": name, "score": score, "source": "your labels",
+                   "confidence": personal["confidence"], "margin": margin}
+            if demote_weak and personal["confidence"] == "weak" and text_ranked:
+                pending = row                      # keep it, but not at the top
+            else:
+                out.append(row)
     for row in text_ranked:
         name = row.get("name")
-        if any(r["name"] == name for r in out):
-            continue
-        out.append({"name": name, "score": row.get("score", 0.0),
-                    "source": "text", "confidence": "text", "margin": None})
+        if pending is not None and pending["name"] == name:
+            # the text arm agrees with the label arm: one row, attributed to the labels
+            out.append(pending)
+            pending = None
+        elif not any(r["name"] == name for r in out):
+            out.append({"name": name, "score": row.get("score", 0.0),
+                        "source": "text", "confidence": "text", "margin": None})
+            if pending is not None:
+                out.append(pending)
+                pending = None
         if len(out) >= top_k:
             break
+    if pending is not None and len(out) < top_k:
+        out.append(pending)
     return out[:top_k]
+
+
+def scope_note(personal: dict | None, scope: set[str] | None) -> str:
+    """Explain, for the log, what the label arm said and why it was not used.
+
+    Silence here would be worse than the bug: the user chose a group, so being told that
+    the fitted classifier recognised something outside it is information, not noise.
+    """
+    if not personal or not personal.get("ranked") or scope is None:
+        return ""
+    name = personal["ranked"][0][0]
+    if name in scope:
+        return ""
+    return (f"your labels recognised “{name}” ({personal.get('confidence')}, margin "
+            f"{personal.get('margin', 0):.3f}) but that species is not in the selected "
+            f"group, so it is not ranked here — the text ranking stands alone")
 
 
 def save(path: pathlib.Path, prototypes: np.ndarray, labels: np.ndarray,
