@@ -72,12 +72,22 @@ for spec, want in cases:
     got = GC.group_from_spec(spec)
     check(f"{str(spec):<28} -> {got}", got == want, f"want {want}")
 
-print("\n7. bony fishes have no GBIF key, and that is deliberate")
-# /species/204 IS Actinopterygii in the backbone, but every fish occurrence record
-# carries classKey=None, so taxonKey=204 returns 0 records. A key that yields a
-# confident empty list is worse than no key.
-name, rank = GC.GROUP_TAXA["bony_fishes"]
-check("bony_fishes has no resolvable taxon", name is None, str((name, rank)))
+print("\n7. bony fishes are filtered by an order union, never by one broad key")
+# /species/204 IS Actinopterygii in the GBIF backbone (rank CLASS, ACCEPTED), but
+# `taxonKey=204` returns 0 occurrence records for a place with thousands of fish, so a
+# single broad key is unusable. The group therefore unions the fish orders the backbone
+# does resolve. It used to be (None, None), i.e. no filter at all — which returned the
+# top 1,000 species by record count (mostly land birds at Anilao) and gave 119 species
+# for Batangas instead of 1,990.
+spec = GC.GROUP_TAXA["bony_fishes"]
+check("bony_fishes is not a bare (None, None)", spec != (None, None), str(spec)[:60])
+bf = spec[0]
+check("bony_fishes unions several taxa", isinstance(bf, list) and len(bf) >= 10,
+      type(bf).__name__ + f" {len(bf) if isinstance(bf, list) else ''}")
+check("every bony-fish entry is ORDER rank",
+      isinstance(bf, list) and all(r == "ORDER" for _, r in bf), str(spec)[:80])
+check("no single-class shortcut like Actinopterygii is used",
+      not (isinstance(bf, str)), str(bf)[:60])
 
 print("\n8. radius becomes a bounding box, because facets are illegal with geoDistance")
 lat_r, lon_r = GC.bbox_from_point(13.75, 120.93, 30)
