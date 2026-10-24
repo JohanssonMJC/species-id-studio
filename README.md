@@ -469,6 +469,42 @@ because deleting a wrong proposal hides an error while deleting a non-subject do
 
 ---
 
+## Groups, and why every name needs one
+
+The group selector exists so a photo is scored against a plausible list rather than all
+7,405 marine names: nudibranchs (880) encode in about a minute, everything takes several,
+and a narrower list also sharpens the margin between the top pick and the next.
+
+Groups are assigned by matching taxon names in each species' lineage, so **a class missing
+from the map strands every species in it** — reachable only through "all marine species".
+That happened: `Gastropoda`, `Bivalvia`, `Polyplacophora`, `Ophiuroidea`, `Ctenophora` and
+`Crocodylia` were absent, leaving **639 of 7,405 names (8.6%) with no group at all** —
+every cone shell, cowrie, egg cowrie, sea hare, clam, chiton, brittle star, comb jelly and
+crocodile. Nothing failed; the lists just quietly left them out.
+
+Two fixes, both now permanent:
+
+- The map covers the classes, using the same union of crustacean classes that the GBIF
+  source needs (GBIF lineages never contain the word "Crustacea" — Decapoda sits under
+  Malacostraca — so "all crustaceans" was missing crabs it could not name).
+- `build_mkw_candidates.py` **fails the build if any name lands in no group**, and before
+  failing it asks api.gbif.org for the lineage of each orphan, because the 2009 keyword
+  list files some names under a phylum only. That rescued 111 of 117 such names; the last
+  seven were solenogasters, salps, larvaceans, a marine iguana, sea otters and a polar
+  bear, which now have groups of their own.
+
+Current groups, by size: bony fishes 3,174 · gastropods 1,353 · sea slugs 938 · nudibranchs
+880 · cephalopods 608 · crustaceans 435 · sharks & rays 405 · corals & anemones 316 ·
+echinoderms 290 · crabs, shrimps & lobsters 283 · worms 127 · bivalves 106 · sponges 94 ·
+jellyfish 92 · algae 89 · tunicates 83 · cetaceans 81 · bryozoans 34 · seals 34 ·
+crocodiles 24 · turtles 6 · sea snakes 48 · sea spiders 5 · dugongs 5 · other molluscs 1.
+
+Note that **spider crabs are crabs, not sea spiders**: *Xenocarcinus tuberculatus* is
+Decapoda › Epialtidae, so it is in "crabs, shrimps & lobsters". Sea spiders are
+Pycnogonida — chelicerates, not crustaceans — and only five of them are in this 2009 list.
+
+---
+
 ## Building your own name lists
 
 `make_marine_lists.py` runs all four stages in order — this is the command to use:
