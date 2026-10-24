@@ -125,6 +125,20 @@ def main() -> int:
     print(f"  1-NN (nearest single label)    : {stats(nn)}")
     print(f"  zero-shot (no labels at all)   : {stats(zs)}")
 
+    # a held-out species with no training example is a different question: the label
+    # methods CANNOT answer it (nothing to match against), while text ranking still can.
+    # Splitting the two keeps the headline from being dragged down by an impossible case,
+    # or flattered by excluding it.
+    known = [k for k, sp in enumerate(sorted(test)) if sp in train]
+    unknown = [k for k, sp in enumerate(sorted(test)) if sp not in train]
+    if known and unknown:
+        for label, idxs in (("species you have labels for", known),
+                            ("species with NO training example", unknown)):
+            sel = [k for k in idxs]
+            print(f"\n  {label} ({len(sel)} photos):")
+            print(f"    1-NN      {stats([nn[k] for k in sel])}")
+            print(f"    zero-shot {stats([zs[k] for k in sel])}")
+
     # Photos the human DELETED instead of renaming are withdrawals, and deleting a WRONG
     # proposal removes a classifier error from the test — which inflates every number
     # above. They cannot be scored (no ground truth was recorded), so they are counted and

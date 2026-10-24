@@ -383,18 +383,37 @@ BioCLIP alone ranks by text description. Give it a few labelled photos per speci
 stops guessing: the same frozen encoder, plus a nearest-neighbour lookup against your
 labels, is what actually moved the number.
 
-Measured on **35 held-out photos of 35 species**, never used as prototypes, against the
-same 100 candidate species:
+Measured on **24 human-verified held-out photos of 24 species**, never used as prototypes,
+against 104 candidate species:
 
 | method | top-1 | top-5 | MRR |
 |---|---|---|---|
-| zero-shot text ranking (no labels) | 45.7% | 71.4% | 0.567 |
-| centroid — mean of your labels | 91.4% | 100% | 0.952 |
-| **1-NN — nearest single label** | **97.1%** | 100% | 0.979 |
+| zero-shot text ranking (no labels) | 70.8% | 95.8% | 0.798 |
+| 1-NN against your labels | 75.0% | 83.3% | 0.783 |
+| centroid — mean of your labels | 75.0% | 83.3% | 0.786 |
+| **hybrid: labels where available, text fallback** | **91.7%** | **100%** | — |
 
-Built from 109 labelled photos covering 100 species, most with a single example. No
-weights were trained: fitting costs seconds and cannot degrade the model, and 1-NN beat
-the centroid average at this example count.
+The split is what matters, because the two methods fail in opposite directions:
+
+| held-out photos | 1-NN | zero-shot |
+|---|---|---|
+| species you have labels for (20) | **90.0%** | 65.0% |
+| species with no labelled example (4) | 0.0% — nothing to match | **100.0%** |
+
+So labels give precision on the animals you know, text ranking gives coverage on the ones
+you don't, and neither alone is the right system. Text ranking also has the better top-5
+(95.8% vs 83.3%): it is the better *recall* arm. Use labels first, fall back to text, and
+union the two for a shortlist.
+
+Built from 109 labelled photos covering 100 species, most with a single example. No weights
+were trained: fitting costs seconds and cannot degrade the model.
+
+**A correction worth stating.** An earlier figure in this README read 97.1% for 1-NN. That
+was measured before the held-out labels had been human-checked, so filenames still carried
+whatever the machine had proposed — self-consistent, not correct. Once checked, 6 of those
+40 proposals turned out to be wrong, and the honest number on species with labels is
+**90.0%**. The lesson is the one this project keeps relearning: an unverified label is not
+ground truth, and an evaluation built on one measures agreement with the proposer.
 
 ### The workflow
 
