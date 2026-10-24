@@ -377,6 +377,54 @@ Columns: photo, taken, GPS, most likely species, probability, candidate source.
 
 ---
 
+## Your own labels: a personal classifier
+
+BioCLIP alone ranks by text description. Give it a few labelled photos per species and it
+stops guessing: the same frozen encoder, plus a nearest-neighbour lookup against your
+labels, is what actually moved the number.
+
+Measured on **35 held-out photos of 35 species**, never used as prototypes, against the
+same 100 candidate species:
+
+| method | top-1 | top-5 | MRR |
+|---|---|---|---|
+| zero-shot text ranking (no labels) | 45.7% | 71.4% | 0.567 |
+| centroid — mean of your labels | 91.4% | 100% | 0.952 |
+| **1-NN — nearest single label** | **97.1%** | 100% | 0.979 |
+
+Built from 109 labelled photos covering 100 species, most with a single example. No
+weights were trained: fitting costs seconds and cannot degrade the model, and 1-NN beat
+the centroid average at this example count.
+
+### The workflow
+
+```bash
+# 1. label photos by renaming them: Genus_species.jpg (see species_labels.py)
+python make_heldout.py  <labelled>    # 40 random photos to label, never used as prototypes
+python eval_heldout.py  <labelled>    # the numbers above
+python bootstrap_confirm.py <labelled>  # propose labels for the rest, for correction
+```
+
+The held-out set is sampled at **random, never by confidence** — choosing confident photos
+flatters the result, which is the easiest way to fool yourself here.
+
+### Two things this cannot do
+
+- **It cannot say "none of these".** A photo of a spider or a butterfly taken on land was
+  given a confident marine species, because every prediction is one of the candidates. A
+  rejection test — best match far closer than the second, or below an absolute floor — is
+  needed before this is wired into the app, or a non-subject photo will be labelled rather
+  than refused.
+- **It does not improve unseen species.** Species with no labelled example still fall back
+  to text ranking, which is why the two modes have to coexist.
+
+Cross-site generalisation could not be measured on this library: only **4 of 100 species**
+were photographed at both sites, so the Philippines and Lembeh faunas are nearly disjoint.
+The personal classifier is therefore regional, which matches how the app already scopes
+candidate lists by place.
+
+---
+
 ## Building your own name lists
 
 `make_marine_lists.py` runs all four stages in order — this is the command to use:

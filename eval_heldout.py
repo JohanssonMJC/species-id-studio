@@ -124,6 +124,30 @@ def main() -> int:
     print(f"  centroid (mean of your labels) : {stats(cent)}")
     print(f"  1-NN (nearest single label)    : {stats(nn)}")
     print(f"  zero-shot (no labels at all)   : {stats(zs)}")
+
+    # Photos the human DELETED instead of renaming are withdrawals, and deleting a WRONG
+    # proposal removes a classifier error from the test — which inflates every number
+    # above. They cannot be scored (no ground truth was recorded), so they are counted and
+    # a pessimistic bound is given treating every withdrawal as an error.
+    man = held_dir.parent / "manifest.json"
+    if man.is_file():
+        import json as _json
+        issued = {m["file"] for m in _json.loads(man.read_text())}
+        present = {p.name for p in held_dir.iterdir() if p.is_file()}
+        withdrawn = sorted(issued - present)
+        # a rename also shows up as issued-minus-present, so only count names that have
+        # no obvious successor: keep it simple and report the raw number
+        if withdrawn:
+            print(f"\n  WITHDRAWN: {len(withdrawn)} issued photos are no longer present "
+                  f"(deleted or renamed)")
+            print("    Deleting a non-subject or unidentifiable photo is correct and does "
+                  "not bias anything.")
+            print("    Deleting a WRONG ID instead of renaming it removes an error from "
+                  "the test — rename wrong proposals, delete only non-subjects.")
+            print("    Upper-bound check if every withdrawal had been an error: "
+                  f"1-NN would be at least "
+                  f"{sum(1 for r in nn if r == 1)/(n_test+len(withdrawn))*100:.1f}%, "
+                  f"centroid {sum(1 for r in cent if r == 1)/(n_test+len(withdrawn))*100:.1f}%")
     return 0
 
 
