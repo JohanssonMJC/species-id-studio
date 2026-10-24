@@ -33,6 +33,7 @@ nudibranch list — the probabilities are BioCLIP's actual output, not mock-ups.
 - [Models](#models)
 - [Quick start](#quick-start)
 - [Candidate sources](#candidate-sources)
+- [Where it is weak, and why — the training data](#where-it-is-weak-and-why--the-training-data)
 - [Two opinions, not one](#two-opinions-not-one)
 - [Photo metadata](#photo-metadata)
 - [Batch mode](#batch-mode)
@@ -290,6 +291,80 @@ Full detail and options: [`docs/REGENERATE.md`](docs/REGENERATE.md).
 ### `Load from file…` — one scientific name per line
 
 Any plain text list. Comments (`#`) and blank lines are ignored.
+
+---
+
+## Where it is weak, and why — the training data
+
+BioCLIP 2 was trained on **TreeOfLife-200M**: 233 million images, 933,798 taxa, from GBIF,
+Encyclopedia of Life, BIOSCAN-5M and FathomNet. The headline count hides where the weight
+sits, and knowing the imbalance predicts the failures you will actually meet:
+
+| image type | images | share |
+|---|---|---|
+| Citizen science (iNaturalist-style) | 171.1M | **73.4%** |
+| Museum specimen: plants | 39.7M | **17.0%** |
+| Museum specimen: insects | 6.9M | 3.0% |
+| BIOSCAN-5M (DNA-barcoded insects) | 5.2M | 2.2% |
+| Museum specimen: invertebrate zoology | 1.7M | 0.73% |
+| Museum specimen: vertebrate zoology (all) | ~848K | 0.36% |
+| **FathomNet (deep-sea imagery)** | **37.9K** | **0.016%** |
+
+Underwater photography, in other words, is close to absent: **37,900 images across only 251
+taxa**, all from deep-sea benthic surveys — a different world from a reef at 10 m. The
+largest slab is citizen science, which for practical purposes means birds, plants and
+insects photographed in daylight on land.
+
+Note one trap when reading the card: FathomNet, EOL and BIOSCAN rows carry `Unidentified` in
+the *image-type* column. That is a metadata gap, not a missing taxon label.
+
+### What that predicts, measured
+
+Thirty-six iNaturalist research-grade photos, one per species, 156 candidate species, two
+model sizes:
+
+| | BioCLIP 2 | BioCLIP 2.5 (Huge) |
+|---|---|---|
+| land photos, top-1 | 8/18 (44%) | **11/18 (61%)** |
+| land photos, top-5 | 10/18 | 14/18 |
+| land MRR | 0.498 | 0.684 |
+| marine photos, top-1 | 4/18 (22%) | 5/18 (**28%**) |
+| marine photos, top-5 | 5/18 | 8/18 |
+| marine MRR | 0.277 | 0.383 |
+
+A bigger model bought **+17 points on land and +6 underwater**. That is the training
+imbalance showing up as a measurable ceiling, not as a bug you can prompt your way out of.
+
+On this project's own photographs, zero-shot reaches **74.3% top-1** on 109 hand-picked
+medoid photos (Philippines 78.3%, Lembeh 61.5%) and **70.8%** on 24 randomly sampled,
+human-verified held-out photos. Medoid photos flatter the model — they are the most typical
+frame of each animal; the random sample includes the awkward ones.
+
+### The failure mode to recognise
+
+Marine mistakes rarely look random. They **collapse onto a few attractor names**: one fish
+(*Antennarius maculatus*) was top pick for three different species, and a green alga
+(*Chaetomorpha coliformis*) was returned at 87–100% for both a nudibranch and an isopod. When
+a top pick is confidently wrong underwater, check whether it is the same name you keep
+seeing — that is a gap in the training data, and no amount of re-prompting will fix it.
+
+### What follows for using this app
+
+- **The candidate list matters more than the model.** Cutting 7,405 marine names down to the
+  393 nudibranchs recorded within 40 m of one dive site is what puts the right answer at rank
+  1; the same photo against the full list still ranks it 1st, but at a much thinner margin.
+- **Your own labels beat a bigger model.** With labels, 1-NN reaches **90.0% top-1** on
+  species you have examples of, against 65.0% for text ranking on the same photos. Fitting
+  costs seconds and no GPU; BioCLIP 2.5 Huge costs ~2.5 GB and buys +6 points underwater.
+- **Never trust an underwater top-1 on its own.** The app exists because of this: a second,
+  independent opinion, a candidate list you chose, and labels you supplied are the three
+  things that fix what the training data cannot.
+- **It has no notion of habitat, depth or season.** Those are not concepts in an
+  image-text model; the app provides them from GBIF/iNaturalist records instead.
+- **There is no zero-shot marine classifier to switch to.** FathomNet-published models are
+  *detectors* (bounding boxes for a fixed set of taxa), plankton classifiers are built for
+  specific instruments, and there is no public marine BioCLIP fine-tune — the closest
+  precedent is a butterfly fine-tune. Hence: labels, not a different download.
 
 ---
 
