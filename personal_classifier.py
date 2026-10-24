@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import time
 
 import numpy as np
 
@@ -145,6 +146,90 @@ def scope_note(personal: dict | None, scope: set[str] | None) -> str:
     return (f"your labels recognised “{name}” ({personal.get('confidence')}, margin "
             f"{personal.get('margin', 0):.3f}) but that species is not in the selected "
             f"group, so it is not ranked here — the text ranking stands alone")
+
+
+def provenance_summary(meta: dict) -> dict:
+    """How many labels came from a human, and how many from the app's own suggestion.
+
+    This split is the whole safety story for learning as you go. A label recorded because
+    the app suggested the species is NOT independent evidence: the classifier is then being
+    taught what it already believes, its margins rise without its accuracy doing so, and any
+    evaluation on those labels measures agreement with the proposer rather than correctness.
+    Counting them is what keeps that visible; it is also why eval tools score only the
+    "human" ones.
+    """
+    sources = meta.get("sources") or []
+    out = {"human": 0, "app_top1": 0, "app_lower_rank": 0, "typed": 0, "unknown": 0}
+    for s in sources:
+        origin = str(s.get("origin") or "human")
+        key = (origin if origin in ("human", "typed") else
+               "app_top1" if origin.startswith("app:") and s.get("rank") in (1, None)
+               else "app_lower_rank" if origin.startswith("app:") else "unknown")
+        out[key] = out.get(key, 0) + 1
+    if not sources:
+        out["human"] = int(meta.get("photos") or 0)
+    return out
+
+
+def add_example(path, embedding, species: str, *, photo: str | None = None,
+                origin: str = "human", rank: int | None = None,
+                confidence: str | None = None, margin: float | None = None,
+                dup_cosine: float = 0.995) -> dict:
+    """Add one labelled photo to a fitted classifier, without re-encoding the folder.
+
+    The embedding is already computed for the identification, so this costs one vector and
+    one small file write — a full refit over hundreds of photos is not needed to learn one.
+
+    `origin` records where the label came from: "human" (you typed it), "typed", or
+    "app:<arm>" with the rank and confidence the app had given it. A near-duplicate of an
+    existing photo of the same species is refused rather than added, because otherwise
+    clicking accept twice on one photo (or on two frames of the same animal) skews that
+    species' neighbourhood.
+
+    Returns {"added": bool, "reason": ..., "photos": n, "species": n, "provenance": {...}}.
+    """
+    loaded = load(path)
+    if loaded is None:
+        raise ValueError("no fitted classifier yet — fit one from a labelled folder first")
+    P, L, meta = loaded
+    emb = np.asarray(embedding, dtype=np.float32).ravel()
+    n = np.linalg.norm(emb)
+    if n == 0:
+        raise ValueError("empty embedding")
+    emb = emb / n
+    species = " ".join(str(species).split())
+    if not species:
+        raise ValueError("empty species")
+
+    sims = P @ emb
+    same = np.where(np.asarray(L) == species)[0]
+    if len(same):
+        best = float(np.max(sims[same]))
+        if best >= dup_cosine:
+            return {"added": False, "reason": f"near-duplicate of an existing "
+                    f"{species} photo (cosine {best:.3f})",
+                    "photos": len(L), "species": len(set(L.tolist())),
+                    "provenance": provenance_summary(meta)}
+
+    sources = list(meta.get("sources") or [])
+    if not sources:                                  # a classifier fitted before this
+        sources = [{"origin": "human"} for _ in range(len(L))]
+    sources.append({"photo": str(photo or ""), "origin": origin, "rank": rank,
+                    "confidence": confidence, "margin": margin,
+                    "when": time.strftime("%Y-%m-%d %H:%M:%S")})
+
+    P2 = np.vstack([P, emb.astype(np.float32)])
+    L2 = np.append(np.asarray(L), species)
+    counts: dict[str, int] = {}
+    for lab in L2.tolist():
+        counts[lab] = counts.get(lab, 0) + 1
+    meta = dict(meta)
+    meta.update({"photos": len(L2), "species": len(counts),
+                 "examples_per_species": counts, "sources": sources})
+    save(path, P2, L2, meta)
+    return {"added": True, "reason": "added", "photos": len(L2), "species": len(counts),
+            "examples_for_species": counts.get(species, 0),
+            "provenance": provenance_summary(meta)}
 
 
 def save(path: pathlib.Path, prototypes: np.ndarray, labels: np.ndarray,

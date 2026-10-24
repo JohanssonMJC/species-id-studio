@@ -29,7 +29,7 @@ def check(name, cond, detail=""):
 
 try:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication, QMessageBox
     import numpy as np
 except Exception as exc:                                  # pragma: no cover
     print(f"  SKIPPED — PyQt6/numpy unavailable: {exc}")
@@ -89,17 +89,28 @@ check("no duplicate of the label answer",
 check("vision handoff gets the merged ranking",
       win.last_ranking[0][0] == personal["top"], win.last_ranking[:2])
 
-print("3. an uncertain margin is flagged in the row and explained in the log")
+print("3. an uncertain margin is flagged, and a weak one does not lead")
 amb = pc.classify(np.array([1.0, 1.0, 0], dtype=np.float32),
                   np.stack([P[0], P[2]]), np.array(["Alpha beta", "Gamma delta"]))
 win._on_bio({"ranked": text_ranked, "personal": amb, "candidates_scored": 2,
              "seconds": 0.1})
-src = win.table.item(0, 3).text()
-check("flagged", "(weak)" in src or "(uncertain)" in src, src)
+# the label row may no longer be first: a "weak" answer is deliberately placed below the
+# best text result (see personal_classifier.merge_with_text), so find it rather than
+# assuming its position
+rows = [(win.table.item(i, 3).text(), win.table.item(i, 1).text())
+        for i in range(win.table.rowCount())]
+label_rows = [(src, name) for src, name in rows if src.startswith("your labels")]
+check("a label row exists", len(label_rows) == 1, rows)
+label_src = label_rows[0][0] if label_rows else ""
+check("flagged", "(weak)" in label_src or "(uncertain)" in label_src, label_src)
+check("a weak answer does not lead", amb["confidence"] != "weak" or
+      rows[0][0].startswith("text"), rows)
 log = win.log.toPlainText()
 check("log explains the margin", "margin" in log.lower(), log[-200:])
 check("log mentions the confidence word",
       ("WEAK" in log or "UNCERTAIN" in log), log[-200:])
+check("log says where it was placed", "below the text top" in log or "as the top row" in log,
+      log[-200:])
 
 print("4. turning it off restores text-only behaviour without deleting anything")
 win._toggle_personal(False)
@@ -207,6 +218,52 @@ check("text rows keep %", win.table.item(1, 2).text().endswith("%"),
 check("column is called Score",
       win.table.horizontalHeaderItem(2).text() == "Score",
       win.table.horizontalHeaderItem(2).text())
+
+print("10. teaching a photo a label updates the fitted classifier")
+# start from a clean fitted file in the temp config dir
+pc.save(species_gui.personal_path(), P, L,
+        {"photos": 3, "species": 2,
+         "examples_per_species": {"Alpha beta": 2, "Gamma delta": 1}})
+win._personal_cache = (None, None)
+check("fitted file present", species_gui.personal_path().is_file())
+
+vec = np.array([0.55, 0.5, 0.67], dtype=np.float32)
+win.image_path = "/tmp/teach-me.jpg"
+win.last_features = vec
+win.last_features_path = win.image_path
+source = {"origin": "app:text", "rank": 2, "confidence": None, "margin": None}
+w = species_gui.TeachLabelWorker(win.image_path, vec, "Alpha beta", source)
+got = {}
+w.done.connect(lambda o: got.update(o))
+w.failed.connect(lambda m: got.update({"error": m}))
+w.run()
+check("no error", "error" not in got, got.get("error"))
+check("a row was added", got.get("added") and got.get("photos") == 4, got)
+check("provenance records the app as the source",
+      got.get("provenance", {}).get("app_lower_rank") == 1, got.get("provenance"))
+
+win._on_teach(got)
+log = win.log.toPlainText()
+check("the log reports the new counts", "now 4 photos" in log, log[-300:])
+check("the log shows the provenance split", "from the app's top pick" in log, log[-300:])
+
+# the same photo again is refused, not duplicated
+w2 = species_gui.TeachLabelWorker(win.image_path, vec, "Alpha beta", source)
+got2 = {}
+w2.done.connect(lambda o: got2.update(o))
+w2.run()
+check("duplicate refused", not got2.get("added"), got2)
+check("no new row", len(pc.load(species_gui.personal_path())[1]) == 4)
+
+# teaching without a fitted classifier says so instead of crashing
+species_gui.personal_path().unlink()
+win._personal_cache = (None, None)
+errors = []
+QMessageBox.information = staticmethod(
+    lambda *a, **k: errors.append(a[2] if len(a) > 2 else ""))
+win.teach_current("Alpha beta")
+check("explains that nothing is fitted yet",
+      any("no fitted classifier" in str(e).lower() for e in errors), errors)
 
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

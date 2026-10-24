@@ -435,6 +435,38 @@ you don't, and neither alone is the right system. Text ranking also has the bett
 At one example per species they measured identically; with several examples per species the
 centroid usually wins, which is why the toggle exists rather than a hardcoded choice.
 
+### Learning as you go — and why the provenance is the important part
+
+Right-click a result and choose **Teach this photo as “X”**, or **Teach as another
+species…**. The embedding is already computed for the identification, so teaching costs one
+vector and a small file write — a full refit over hundreds of photos is not needed to learn
+one. Measured: 307 KB → 313 KB per added photo. An exact or near-exact duplicate
+(cosine ≥ 0.995 to a photo already labelled with that species) is refused rather than added,
+so accepting the same frame twice cannot skew a species' neighbourhood.
+
+**The trap, and what is recorded to survive it.** A label accepted from the app's own top
+pick is not independent evidence: the classifier is being taught what it already believes.
+Its margins rise without its accuracy doing so, and any evaluation over those labels measures
+agreement with the proposer — which is exactly how a 97.1% figure got published earlier in
+this project and then had to be corrected to 90.0%. Every example therefore carries its
+origin, rank and confidence at the time:
+
+| provenance | meaning |
+|---|---|
+| `human` | from a fitted folder, filenames as labels |
+| `typed` | you typed a species the app did not suggest |
+| `app:...` rank 1 | the app's own top pick — a confirmation, not evidence |
+| `app:...` rank > 1 | you picked a lower row, i.e. the app was wrong and you corrected it |
+
+**"What is fitted?"** reports the split, and any `app:` count is labelled as confirming what
+the model already believed. Only `human` and `typed` labels are independent ground truth, so
+those are what an honest accuracy number must be computed on.
+
+Practical advice: teaching a *correction* (the right species was not rank 1) is the most
+valuable thing you can do; teaching a *confirmation* of the top pick mostly makes the
+classifier louder. Both are worth having, but they are not the same thing, and the app keeps
+them apart.
+
 ### The label arm answers only inside the group you asked for
 
 The classifier scores against the candidate list — so an answer from your labels for a

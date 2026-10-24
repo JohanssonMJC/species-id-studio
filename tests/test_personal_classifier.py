@@ -205,5 +205,76 @@ m = pc.merge_with_text(weak, [], top_k=5, scope=scope | {"Chromodoris annae"})
 check("with no text results a weak answer is still shown", len(m) == 1 and
       m[0]["name"] == "Chromodoris annae", m)
 
+print("15. learning one photo at a time, with provenance recorded")
+import shutil as _sh
+with tempfile.TemporaryDirectory() as td:
+    p = pathlib.Path(td) / "pc.npz"
+    pc.save(p, P, L, {"photos": 3, "species": 2,
+                      "examples_per_species": {"Alpha beta": 2, "Gamma delta": 1}})
+    before = pc.provenance_summary(pc.load(p)[2])
+    check("a classifier fitted the old way counts as all human", before["human"] == 3, before)
+
+    rng = np.random.default_rng(1)
+    novel = unit([0.6, 0.5, 0.62])                    # a different frame of Alpha beta
+    r = pc.add_example(p, novel, "Alpha beta", photo="new.jpg",
+                       origin="app:text", rank=2, confidence=None, margin=None)
+    check("added", r["added"], r)
+    check("photo count grew", r["photos"] == 4, r["photos"])
+    check("species count unchanged", r["species"] == 2, r["species"])
+    check("example count for the species grew", r["examples_for_species"] == 3,
+          r.get("examples_for_species"))
+    check("provenance separates it from human labels",
+          r["provenance"]["app_lower_rank"] == 1 and r["provenance"]["human"] == 3,
+          r["provenance"])
+
+    r2 = pc.add_example(p, novel, "Alpha beta", photo="new.jpg", origin="app:text", rank=2)
+    check("the same photo twice is refused", not r2["added"], r2)
+    check("and says why", "near-duplicate" in r2["reason"], r2["reason"])
+
+    r3 = pc.add_example(p, unit([0.1, 0.1, 0.99]), "New species", photo="n.jpg",
+                        origin="typed")
+    check("a brand-new species can be learned", r3["added"] and r3["species"] == 3, r3)
+    check("typed counts separately", r3["provenance"]["typed"] == 1, r3["provenance"])
+
+    P3, L3, meta3 = pc.load(p)
+    check("labels and vectors stay in step", len(P3) == len(L3) == 5, (len(P3), len(L3)))
+    check("every row has a provenance entry", len(meta3.get("sources") or []) == 5,
+          len(meta3.get("sources") or []))
+    top = pc.classify(novel, P3, L3)["top"]
+    check("the taught photo is now recognised", top == "Alpha beta", top)
+
+print("16. adding needs an existing classifier, and rejects nonsense")
+with tempfile.TemporaryDirectory() as td:
+    missing = pathlib.Path(td) / "nope.npz"
+    for label, fn in (("no classifier", lambda: pc.add_example(missing, unit([1, 0, 0]),
+                                                              "Alpha beta")),
+                      ("empty species", lambda: pc.add_example(
+                          pathlib.Path(td) / "x.npz", unit([1, 0, 0]), "  "))):
+        try:
+            fn()
+            check(f"{label} raises", False)
+        except ValueError:
+            check(f"{label} raises", True)
+with tempfile.TemporaryDirectory() as td:
+    p = pathlib.Path(td) / "pc.npz"
+    pc.save(p, P, L, {"photos": 3})
+    try:
+        pc.add_example(p, np.zeros(3), "Alpha beta")
+        check("empty embedding raises", False)
+    except ValueError:
+        check("empty embedding raises", True)
+
+print("17. the provenance split is what an evaluation must respect")
+meta = {"photos": 5, "sources": [{"origin": "human"}, {"origin": "human"},
+                                {"origin": "app:text", "rank": 1},
+                                {"origin": "app:your-labels", "rank": 1},
+                                {"origin": "app:text", "rank": 7}]}
+prov = pc.provenance_summary(meta)
+check("two human labels", prov["human"] == 2, prov)
+check("two top-pick labels", prov["app_top1"] == 2, prov)
+check("one lower-rank label", prov["app_lower_rank"] == 1, prov)
+check("the split adds up",
+      prov["human"] + prov["app_top1"] + prov["app_lower_rank"] + prov["typed"] == 5, prov)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

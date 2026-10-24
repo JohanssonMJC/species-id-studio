@@ -393,6 +393,40 @@ class GbifLookupWorker(QThread):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+class TeachLabelWorker(QThread):
+    """Add one photo to the fitted classifier as a labelled example.
+
+    Reuses the embedding the identification already computed when it belongs to the current
+    photo, so teaching costs a file write rather than another pass through the model.
+    """
+    done = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, path: str, embedding, species: str, source: dict):
+        super().__init__()
+        self.path, self.embedding = path, embedding
+        self.species, self.source = species, source
+
+    def run(self) -> None:
+        try:
+            if personal_classifier is None:
+                self.failed.emit("personal_classifier.py is missing.")
+                return
+            emb = self.embedding
+            if emb is None:
+                if speciesid is None:
+                    self.failed.emit("speciesid.py is missing.")
+                    return
+                if BioClipWorker._engine is None:
+                    BioClipWorker._engine = speciesid.BioCLIP()
+                emb = BioClipWorker._engine.image_features(self.path)
+            out = personal_classifier.add_example(
+                personal_path(), emb, self.species, photo=self.path, **self.source)
+            self.done.emit(out)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class PersonalFitWorker(QThread):
     """Embed every labelled photo in a folder and save the prototypes.
 
@@ -2058,6 +2092,93 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(
                 f"https://www.inaturalist.org/search?q={name}"))
 
+    # -- teaching a photo a label ------------------------------------------ #
+    def teach_current(self, species: str | None) -> None:
+        """Record this photo as a labelled example of `species`.
+
+        The provenance matters more than the feature. A label taken from the app's own
+        top pick is not independent evidence — the classifier is then being taught what it
+        already believes, and its margins rise without its accuracy doing so. That is
+        recorded per example (rank and confidence at the time) and counted in "What is
+        fitted?", so the self-taught share of the classifier is always visible.
+        """
+        if not self.image_path:
+            QMessageBox.information(self, APP_NAME, "Open a photo first.")
+            return
+        if personal_classifier is None:
+            QMessageBox.warning(self, APP_NAME, "personal_classifier.py is missing.")
+            return
+        if not personal_path().is_file():
+            QMessageBox.information(
+                self, APP_NAME,
+                "There is no fitted classifier to add to yet.\n\n"
+                "Your labels ▸ Fit from labelled folder… creates one from a folder of "
+                "photos whose filenames start with the species. After that, every "
+                "identification can be taught in one click.")
+            return
+        if getattr(self, "teach_worker", None):
+            return
+        if not species:
+            species, ok = QInputDialog.getText(
+                self, APP_NAME,
+                "Species for this photo (genus and species, e.g. Chromodoris annae):")
+            if not ok or not species.strip():
+                return
+        species = " ".join(species.split())
+
+        # where did this label come from, and how good was the app's own view of it?
+        source = {"origin": "typed", "rank": None, "confidence": None, "margin": None}
+        for i in range(self.table.rowCount()):
+            nm = self.table.item(i, 1)
+            if nm and nm.text() == species:
+                src = self.table.item(i, 3).text() if self.table.item(i, 3) else ""
+                from_labels = src.startswith("your labels")
+                conf = "weak" if "(weak)" in src else ("uncertain" if "(uncertain)" in src
+                                                       else ("confident" if from_labels else None))
+                source = {"origin": "app:your-labels" if from_labels else "app:text",
+                          "rank": i + 1, "confidence": conf, "margin": None}
+                break
+
+        emb = None
+        if getattr(self, "last_features_path", None) == self.image_path:
+            emb = getattr(self, "last_features", None)
+        self.log.appendPlainText(
+            f"Teaching this photo as “{species}”"
+            + (f" (from row {source['rank']}, {source['origin']})"
+               if source["origin"].startswith("app:") else " (typed)"))
+        self.teach_worker = TeachLabelWorker(self.image_path, emb, species, source)
+        self.teach_worker.done.connect(self._on_teach)
+        self.teach_worker.failed.connect(self._on_teach_fail)
+        self._track(self.teach_worker)
+        self.teach_worker.start()
+
+    def _on_teach(self, out: dict) -> None:
+        self.teach_worker = None
+        if not out.get("added"):
+            self.log.appendPlainText(f"Not added: {out.get('reason')}.")
+            self.statusBar().showMessage("Already have that photo", 15000)
+            return
+        prov = out.get("provenance") or {}
+        self._personal_cache = (None, None)          # reload on next identify
+        self.log.appendPlainText(
+            f"Added: now {out['photos']} photos, {out['species']} species "
+            f"({out.get('examples_for_species', 0)} of this one).\n"
+            f"  labels from you: {prov.get('human', 0)} · from the app's top pick: "
+            f"{prov.get('app_top1', 0)} · from a lower row: {prov.get('app_lower_rank', 0)} "
+            f"· typed: {prov.get('typed', 0)}")
+        if prov.get("app_top1"):
+            self.log.appendPlainText(
+                "  Labels recorded from the app's own top pick are counted separately: "
+                "they confirm what the classifier already believes, so they raise its "
+                "confidence but are no evidence of accuracy.")
+        self.statusBar().showMessage(
+            f"Learned {out['species']} — {out['photos']} labelled photos", 20000)
+
+    def _on_teach_fail(self, msg: str) -> None:
+        self.teach_worker = None
+        self.log.appendPlainText(f"Could not add the label: {msg}")
+        QMessageBox.warning(self, APP_NAME, f"Could not add the label.\n\n{msg}")
+
     # -- your own labels --------------------------------------------------- #
     def _personal_set(self):
         """(prototypes, labels) when fitted and enabled, else None.
@@ -2143,11 +2264,18 @@ class MainWindow(QMainWindow):
         _, labels, meta = loaded
         counts = meta.get("examples_per_species", {})
         single = sum(1 for v in counts.values() if v == 1)
+        prov = personal_classifier.provenance_summary(meta)
+        selflabelled = prov.get("app_top1", 0) + prov.get("app_lower_rank", 0)
+        prov_line = (f"\nLabels: {prov.get('human', 0)} yours · {prov.get('typed', 0)} typed"
+                     f" · {selflabelled} learned from the app"
+                     + (" (those confirm what it already believed — they are not evidence "
+                        "of accuracy)" if selflabelled else "") + "\n")
         QMessageBox.information(
             self, APP_NAME,
             f"Fitted from {meta.get('photos')} photos of {meta.get('species')} species.\n"
             f"{single} species have only one example — fine, but a second photo of each "
             f"raises the ceiling.\n\n"
+            + prov_line +
             f"Source folder: {meta.get('source_folder')}\n"
             f"Stored at: {personal_path()}\n\n"
             f"Matching: {'species averages' if self.cfg.get('personal_use_centroids') else 'nearest single photo (1-NN)'}\n"
@@ -2280,6 +2408,9 @@ class MainWindow(QMainWindow):
         # proposals — which is both false and can omit the true species entirely.
         self.last_ranking = [(r["name"], float(r["score"])) for r in rows]
         self.last_ranking_path = self.image_path
+        # kept so "teach this photo" needs no second pass through the model
+        self.last_features = out.get("features")
+        self.last_features_path = self.image_path
         top = rows[0]["name"] if rows else "?"
         self.log.appendPlainText(
             f"BioCLIP 2: {len(rows)} shown of {out.get('candidates_scored')} scored, "
@@ -2650,6 +2781,11 @@ class MainWindow(QMainWindow):
             lambda: QDesktopServices.openUrl(QUrl(
                 "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar="
                 + name.replace(" ", "+"))))
+        m.addSeparator()
+        a6 = m.addAction(f"Teach this photo as “{name}”")
+        a6.triggered.connect(lambda: self.teach_current(name))
+        a7 = m.addAction("Teach as another species…")
+        a7.triggered.connect(lambda: self.teach_current(None))
         a5 = m.addAction("Open in Google Images")
         a5.triggered.connect(
             lambda: QDesktopServices.openUrl(
