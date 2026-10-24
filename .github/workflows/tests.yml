@@ -22,11 +22,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # The pure-logic tests only need Pillow (speciesid imports it at module level);
-      # torch, open_clip and PyQt6 are deliberately NOT installed — these tests must
-      # stay runnable anywhere.
+      # The pure-logic tests need Pillow (speciesid imports it at module level) and numpy
+      # (personal_classifier's decision logic is numpy, and it is a shipped module that
+      # must be tested). torch, open_clip and PyQt6 are deliberately NOT installed — these
+      # tests must stay runnable anywhere. Qt tests skip themselves and say so.
       - name: Install minimal deps
-        run: pip install "Pillow>=10.0"
+        run: pip install "Pillow>=10.0" "numpy>=1.24"
 
       # Discover rather than list: a new tests/test_*.py is picked up automatically, so
       # a test can never be written and silently not run.
