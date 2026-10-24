@@ -79,7 +79,33 @@ GROUP_TAXA = {
     # Elasmobranchii is sharks, rays and skates; Holocephali adds the chimaeras, so a
     # diver who photographs one does not get an empty list.
     "sharks_rays": ([("Elasmobranchii", "CLASS"), ("Holocephali", "CLASS")], "CLASS"),
-    "bony_fishes": (None, None),
+    # There is NO ray-finned fish class in GBIF's backbone: `species/match` answers NONE
+    # for Actinopterygii at every rank (KINGDOM/PHYLUM/CLASS/SUPERCLASS), and Osteichthyes,
+    # Teleostei and Actinopteri do not exist either — /species/search only finds parasites
+    # NAMED after fish. So this group used to run with no filter at all, and the caller then
+    # intersected a top-1,000 species facet with the user's fish list. That facet is ordered
+    # by record count and at Anilao it is dominated by land birds (Pycnonotus goiavier,
+    # Passer montanus), which is why "reef & bony fishes" returned 119 species at Batangas
+    # and dropped every fish that did not happen to make the cut.
+    #
+    # The orders below are the widest fish-only taxa the backbone does have (24 of 37 tried;
+    # the rest answer NONE because GBIF keeps the newer orders inside Perciformes —
+    # Gobiiformes, Acanthuriformes, Carangiformes, Labriformes, Blenniiformes and others all
+    # fold back into it, which is why Perciformes alone carries hundreds of species here).
+    # Union, not a single key, for the usual reason: a missing candidate costs the whole
+    # identification.
+    "bony_fishes": ([("Perciformes", "ORDER"), ("Scorpaeniformes", "ORDER"),
+                     ("Tetraodontiformes", "ORDER"), ("Anguilliformes", "ORDER"),
+                     ("Syngnathiformes", "ORDER"), ("Pleuronectiformes", "ORDER"),
+                     ("Beloniformes", "ORDER"), ("Clupeiformes", "ORDER"),
+                     ("Mugiliformes", "ORDER"), ("Atheriniformes", "ORDER"),
+                     ("Ophidiiformes", "ORDER"), ("Lophiiformes", "ORDER"),
+                     ("Beryciformes", "ORDER"), ("Aulopiformes", "ORDER"),
+                     ("Polymixiiformes", "ORDER"), ("Lampriformes", "ORDER"),
+                     ("Zeiformes", "ORDER"), ("Gadiformes", "ORDER"),
+                     ("Elopiformes", "ORDER"), ("Albuliformes", "ORDER"),
+                     ("Osteoglossiformes", "ORDER"), ("Gonorynchiformes", "ORDER"),
+                     ("Stomiiformes", "ORDER"), ("Myctophiformes", "ORDER")], None),
     "turtles": ("Testudines", "CLASS"),
     "cetaceans": ("Cetacea", "ORDER"),
     "seals": ("Pinnipedia", "FAMILY"),

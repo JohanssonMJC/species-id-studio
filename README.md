@@ -477,6 +477,38 @@ because deleting a wrong proposal hides an error while deleting a non-subject do
 
 ---
 
+### GBIF cannot filter "bony fishes" — so it filters by order instead
+
+There is **no ray-finned fish class in GBIF's backbone**. `species/match` answers `NONE` for
+`Actinopterygii` at kingdom, phylum, class and superclass rank, and `Osteichthyes`,
+`Teleostei` and `Actinopteri` do not exist either; `/species/search` only finds parasites
+*named* after fish (`Deevirus actinopterygii`, a virus). The occurrence index does support
+`classKey`, but with no class to point at it is useless here.
+
+So this group used to run **with no taxon filter at all**, and the app then intersected a
+top-1,000 species facet with the marine fish list. That facet is ordered by record count, so
+at Anilao it is dominated by land birds — `Pycnonotus goiavier`, `Passer montanus` — and
+"reef & bony fishes" returned **119 species** for Batangas, silently dropping every fish that
+did not make the cut.
+
+It now unions **24 fish orders** that GBIF does have: Perciformes, Scorpaeniformes,
+Tetraodontiformes, Anguilliformes, Syngnathiformes, Pleuronectiformes, Beloniformes,
+Clupeiformes, Mugiliformes, Atheriniformes, Ophidiiformes, Lophiiformes, Beryciformes,
+Aulopiformes, Polymixiiformes, Lampriformes, Zeiformes, Gadiformes, Elopiformes,
+Albuliformes, Osteoglossiformes, Gonorynchiformes, Stomiiformes, Myctophiformes. Of 37 orders
+tried, 13 answer `NONE` because GBIF keeps the newer ones *inside* Perciformes —
+Gobiiformes, Acanthuriformes, Carangiformes, Labriformes, Blenniiformes and others all fold
+back into it, which is why Perciformes alone carries hundreds of species at one place.
+
+Measured at Batangas (13.715, 120.896, 100 km): **1,990 species, up from 119**, of which 867
+are in this project's curated fish list and the rest are GBIF names the 2009 list lacks. The
+cost is encoding time: ~126 s for the first identification against ~8 s for the truncated
+list, then cached. Deep-water orders (Myctophiformes, Stomiiformes, Gadiformes) are included
+because a missing candidate costs the whole identification — trim them if the encoding time
+matters more to you.
+
+---
+
 ## Groups, and why every name needs one
 
 The group selector exists so a photo is scored against a plausible list rather than all
