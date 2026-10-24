@@ -43,3 +43,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# fitted from a user's own photographs — never distributable
+personal_classifier.npz
+personal_classifier.npz.json

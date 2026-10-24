@@ -268,35 +268,53 @@ class BioCLIP:
             self._text_cache.popitem(last=False)
         return feats
 
-    def rank(self, image_path: str | Path, candidates: list[str], top_k: int = 10) -> list[dict]:
-        """Rank candidate scientific names against an image. Returns a sorted list."""
+    def image_features(self, image_path: str | Path):
+        """L2-normalised image embedding, as numpy. The vector the personal classifier
+        matches against; exposing it means the app never encodes the same photo twice."""
         import torch
         from PIL import Image
+        self.load()
+        img = Image.open(image_path).convert("RGB")
+        with torch.no_grad():
+            x = self._preprocess(img).unsqueeze(0).to(self.device)
+            feat = self._model.encode_image(x)
+            feat = feat / feat.norm(dim=-1, keepdim=True)
+        return feat[0].float().cpu().numpy()
+
+    def rank_from_features(self, feat, candidates: list[str], top_k: int = 10) -> list[dict]:
+        """Same ranking as rank(), for an embedding already computed."""
+        import torch
         self.load()
         names = [c.strip() for c in candidates if c.strip()]
         if not names:
             raise ValueError("empty candidate list")
-        img = Image.open(image_path).convert("RGB")
         with torch.no_grad():
-            x = self._preprocess(img).unsqueeze(0).to(self.device)
-            img_feat = self._model.encode_image(x)
+            img_feat = torch.as_tensor(feat, dtype=torch.float32, device=self.device)
             img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
             txt_feat = self._text_features(names)
-            logits = (self._model.logit_scale.exp() * img_feat @ txt_feat.T)[0]
+            logits = (self._model.logit_scale.exp() * img_feat @ txt_feat.T)
             probs = logits.softmax(dim=-1)
         order = torch.argsort(probs, descending=True)[:top_k]
         return [{"name": names[i], "score": float(probs[i]),
                  "logit": float(logits[i])} for i in order]
 
+    def rank(self, image_path: str | Path, candidates: list[str], top_k: int = 10) -> list[dict]:
+        """Rank candidate scientific names against an image. Returns a sorted list."""
+        return self.rank_from_features(self.image_features(image_path), candidates, top_k)
+
     def describe_image(self, image_path: str | Path, candidates: list[str],
                        top_k: int = 10) -> dict:
-        ranked = self.rank(image_path, candidates, top_k=top_k)
+        feat = self.image_features(image_path)
+        ranked = self.rank_from_features(feat, candidates, top_k=top_k)
         top = ranked[0] if ranked else None
         return {
             "engine": "BioCLIP 2 (local)",
             "candidates_scored": len([c for c in candidates if c.strip()]),
             "top": top,
             "ranked": ranked,
+            # the embedding travels with the result so the personal classifier can match
+            # against it without a second pass over the same photo
+            "features": feat,
         }
 
 

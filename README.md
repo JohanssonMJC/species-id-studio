@@ -402,45 +402,70 @@ The split is what matters, because the two methods fail in opposite directions:
 
 So labels give precision on the animals you know, text ranking gives coverage on the ones
 you don't, and neither alone is the right system. Text ranking also has the better top-5
-(95.8% vs 83.3%): it is the better *recall* arm. Use labels first, fall back to text, and
-union the two for a shortlist.
+(95.8% vs 83.3%): it is the better *recall* arm.
 
-Built from 109 labelled photos covering 100 species, most with a single example. No weights
-were trained: fitting costs seconds and cannot degrade the model.
+### Using it in the app
 
-**A correction worth stating.** An earlier figure in this README read 97.1% for 1-NN. That
-was measured before the held-out labels had been human-checked, so filenames still carried
-whatever the machine had proposed — self-consistent, not correct. Once checked, 6 of those
-40 proposals turned out to be wrong, and the honest number on species with labels is
-**90.0%**. The lesson is the one this project keeps relearning: an unverified label is not
+1. Put your own photos in a folder and **rename each so the filename starts with the
+   species**: `Chromodoris_anna_01.jpg`, `Chromodoris_anna_02.jpg`, `Synodus_variegatus.jpg`.
+   Anything after the species is free text. Camera filenames (`OI3A2349.jpg`, `DSC_0123.jpg`)
+   and unlabelled exports are ignored rather than guessed — `species_labels.py` decides
+   what counts as a label.
+2. **Your labels ▸ Fit from labelled folder…** — one pass over the folder, seconds to a
+   couple of minutes depending on how many photos. The result is stored at
+   `~/.config/species_studio/personal_classifier.npz`, beside your config. It contains
+   embeddings of your photographs: it is never written into the app directory and never
+   into a repository.
+3. Identify as usual. The first row now comes from your labels and is marked **your
+   labels**; the rows under it come from the candidate-list text ranking and are marked
+   **text**, covering the species you have not labelled.
+4. **Your labels ▸ What is fitted?** reports photo and species counts, the folder it came
+   from, and how many species rest on a single example. **Forget fitted classifier** deletes
+   the fitted file and touches no photographs.
+
+**Use averages instead of nearest photo** switches between 1-NN (default) and centroids.
+At one example per species they measured identically; with several examples per species the
+centroid usually wins, which is why the toggle exists rather than a hardcoded choice.
+
+### It flags, it does not refuse
+
+A rejection threshold cannot be made both safe and useful here. Measured with 24 verified
+animal photos as positives and 22 deleted non-subject photos as negatives:
+
+| margin threshold | true animals refused | non-subjects accepted |
+|---|---|---|
+| ≥ 0.04 | 3 of 24 | 5 of 22 |
+| ≥ 0.06 | 5 of 24 | 3 of 22 |
+| ≥ 0.10 | 12 of 24 | 1 of 22 |
+
+Absolute similarity is no help either: non-subjects reached 0.932 while real animals went as
+low as 0.795, so any similarity floor rejects animals before it rejects junk. Because
+excluding the true species costs the whole identification, the app **never silently
+refuses** — it shows the closest label with a confidence word, explains the margin in the
+log, and lets you see it is weak. A photograph of a spider and a butterfly each came back as
+a confident marine species before the labels existed; now that is visible rather than
+plausible.
+
+### A correction worth stating
+
+An earlier figure in this README read 97.1% for 1-NN. That was measured before the held-out
+labels had been human-checked, so filenames still carried whatever the machine had proposed
+— self-consistent, not correct. Once checked, 6 of those 40 proposals turned out to be
+wrong, and the honest number on species with labels is **90.0%**. An unverified label is not
 ground truth, and an evaluation built on one measures agreement with the proposer.
 
-### The workflow
+### Offline evaluation tools
 
 ```bash
-# 1. label photos by renaming them: Genus_species.jpg (see species_labels.py)
-python make_heldout.py  <labelled>    # 40 random photos to label, never used as prototypes
-python eval_heldout.py  <labelled>    # the numbers above
-python bootstrap_confirm.py <labelled>  # propose labels for the rest, for correction
+python make_heldout.py  <labelled>      # random held-out photos to label — never by confidence
+python eval_heldout.py  <labelled>      # the table above, recomputed on your own labels
+python bootstrap_confirm.py <labelled>  # propose labels for unlabelled photos, for correction
 ```
 
-The held-out set is sampled at **random, never by confidence** — choosing confident photos
-flatters the result, which is the easiest way to fool yourself here.
-
-### Two things this cannot do
-
-- **It cannot say "none of these".** A photo of a spider or a butterfly taken on land was
-  given a confident marine species, because every prediction is one of the candidates. A
-  rejection test — best match far closer than the second, or below an absolute floor — is
-  needed before this is wired into the app, or a non-subject photo will be labelled rather
-  than refused.
-- **It does not improve unseen species.** Species with no labelled example still fall back
-  to text ranking, which is why the two modes have to coexist.
-
-Cross-site generalisation could not be measured on this library: only **4 of 100 species**
-were photographed at both sites, so the Philippines and Lembeh faunas are nearly disjoint.
-The personal classifier is therefore regional, which matches how the app already scopes
-candidate lists by place.
+Held-out photos are sampled at **random, never by confidence**: choosing confident photos
+flatters the result, which is the easiest way to fool yourself here. `eval_heldout.py` also
+splits species you have labels for from species you do not, and counts withdrawn photos,
+because deleting a wrong proposal hides an error while deleting a non-subject does not.
 
 ---
 
