@@ -413,12 +413,20 @@ you don't, and neither alone is the right system. Text ranking also has the bett
    what counts as a label.
 2. **Your labels ▸ Fit from labelled folder…** — one pass over the folder, seconds to a
    couple of minutes depending on how many photos. The result is stored at
-   `~/.config/species_studio/personal_classifier.npz`, beside your config. It contains
+   `~/.config/species_studio/personal_classifier.npz` — in a folder named after the config
+   file, so a test config and a real one can never share a classifier. It contains
    embeddings of your photographs: it is never written into the app directory and never
    into a repository.
 3. Identify as usual. The first row now comes from your labels and is marked **your
    labels**; the rows under it come from the candidate-list text ranking and are marked
-   **text**, covering the species you have not labelled.
+   **text**, covering the species you have not labelled. **Batch folders get the same
+   treatment** — one encode per photo feeds both arms, and the CSV export carries the label
+   answer in its own `your_labels_*` columns.
+
+   The two arms are **not on the same scale and are not printed as if they were**: the
+   label score is a cosine similarity (`sim 0.93`), the text score is a softmax probability
+   (`31.00%`). The label arm's trustworthiness is its *margin* to the runner-up, which is
+   in the log and the CSV.
 4. **Your labels ▸ What is fitted?** reports photo and species counts, the folder it came
    from, and how many species rest on a single example. **Forget fitted classifier** deletes
    the fitted file and touches no photographs.

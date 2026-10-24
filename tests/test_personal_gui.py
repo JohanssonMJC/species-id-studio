@@ -157,5 +157,56 @@ check("camera filename ignored", got.get("unparsed_files") == 1,
 species_gui.speciesid = orig_cls
 species_gui.BioClipWorker._engine = orig_engine
 
+print("7. the fitted file lives in a folder named after the config, not beside it")
+# The bug this pins: personal_path() returned CFG_PATH.parent / "personal_classifier.npz"
+# (~/.config/personal_classifier.npz) while the fit flow saved into a folder
+# (~/.config/species_studio/personal_classifier.npz). Two different paths, so a fitted
+# classifier was never found and every identification said "text".
+pp = species_gui.personal_path()
+cfg_path = species_gui.CFG_PATH
+check("inside a directory, not loose in the config dir",
+      pp.parent != cfg_path.parent, f"{pp} vs {cfg_path}")
+check("directory named after the config file",
+      pp.parent.name == cfg_path.stem, f"{pp.parent.name} != {cfg_path.stem}")
+check("exact expected path", pp == cfg_path.parent / cfg_path.stem / "personal_classifier.npz",
+      pp)
+check("a fitted file at that path is found",
+      species_gui.personal_path().is_file() and win._personal_set() is not None)
+
+print("8. the batch path answers from your labels too, not just single photos")
+win.image_path = "/tmp/batch-not-real.jpg"
+win.results.clear()
+win.btable.setRowCount(0)
+q2 = P[1]
+person2 = pc.classify(q2, P, L)
+win._on_batch_row({"photo": "/tmp/b.jpg", "name": "b.jpg",
+                   "meta": {"datetime": "2026-01-02T03:04:05"},
+                   "candidate_source": "list", "candidates": 880,
+                   "ranked": text_ranked, "personal": person2, "seconds": 0.2,
+                   "error": None})
+check("batch shows the label answer first",
+      win.btable.item(0, 3).text() == person2["top"], win.btable.item(0, 3).text())
+check("batch attributes it to your labels",
+      win.btable.item(0, 5).text().startswith("your labels"), win.btable.item(0, 5).text())
+check("batch score is a similarity, not a percentage",
+      win.btable.item(0, 4).text().startswith("sim "), win.btable.item(0, 4).text())
+flat = species_gui.MainWindow._flatten(win.results[-1])
+check("csv keeps the label arm in its own columns",
+      flat.get("your_labels_species") == person2["top"], flat.get("your_labels_species"))
+check("csv does not present similarity as a probability",
+      flat.get("your_labels_probability") is None
+      and flat.get("top1_probability", "").endswith("%"), list(flat))
+
+print("9. the single-photo table does not print similarity as a percentage either")
+win._on_bio({"ranked": text_ranked, "personal": person2, "candidates_scored": 2,
+             "seconds": 0.1})
+check("personal row says sim", win.table.item(0, 2).text().startswith("sim "),
+      win.table.item(0, 2).text())
+check("text rows keep %", win.table.item(1, 2).text().endswith("%"),
+      win.table.item(1, 2).text())
+check("column is called Score",
+      win.table.horizontalHeaderItem(2).text() == "Score",
+      win.table.horizontalHeaderItem(2).text())
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

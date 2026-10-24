@@ -115,9 +115,16 @@ DEFAULTS = {
 
 
 def personal_path() -> Path:
-    """Fitted prototypes live beside the config, never inside the app or the repository:
-    they are made of the user's photographs and are not distributable."""
-    return CFG_PATH.parent / "personal_classifier.npz"
+    """Fitted prototypes live in a folder named after the config, never inside the app or
+    the repository: they are made of the user's photographs and are not distributable.
+
+    The folder is keyed to the config file's name (…/species_studio.json →
+    …/species_studio/personal_classifier.npz) so a test config and a real one cannot share
+    a classifier. Writing it beside the config, in ~/.config itself, was a bug: the fit
+    dialog saved to the folder and the app looked beside the file, so a fitted classifier
+    was never found and every identification said "text".
+    """
+    return CFG_PATH.parent / CFG_PATH.stem / "personal_classifier.npz"
 
 
 def load_cfg() -> dict:
@@ -743,7 +750,8 @@ class BatchWorker(QThread):
     def __init__(self, folder: str, recursive: bool, auto_gps: bool, online: bool,
                  fixed_candidates: list[str], radius_km: int, top_k: int,
                  month_override: int | None = None, spec: dict | None = None,
-                 files: list[str] | None = None):
+                 files: list[str] | None = None,
+                 personal=None, use_centroids: bool = False):
         super().__init__()
         self.folder = folder
         # An explicit file selection wins over the folder walk. Picking photos by hand
@@ -758,6 +766,11 @@ class BatchWorker(QThread):
         self.top_k = top_k
         self.month_override = month_override
         self.spec = spec or {}
+        # (prototypes, labels) when fitted, so a batch run answers from the user's own
+        # photographs too. Without this the batch path used engine.rank() alone and every
+        # row in a 6,000-photo run ignored the classifier.
+        self.personal = personal
+        self.use_centroids = use_centroids
         self._cancel = False
 
     def cancel(self) -> None:
@@ -823,7 +836,19 @@ class BatchWorker(QThread):
                 continue
             t0 = time.time()
             try:
-                ranked = engine.rank(f, cands, top_k=self.top_k)
+                # one encode, both arms — the embedding feeds the text ranking and the
+                # personal classifier, so labelling costs nothing extra per photo
+                feat = engine.image_features(f)
+                ranked = engine.rank_from_features(feat, cands, top_k=self.top_k)
+                person = None
+                if self.personal and personal_classifier is not None:
+                    try:
+                        P, labels = self.personal
+                        person = personal_classifier.classify(
+                            feat, P, labels, top_k=self.top_k,
+                            use_centroids=self.use_centroids)
+                    except Exception:
+                        person = None
             except Exception as exc:
                 self.row.emit({"photo": str(f), "name": f.name, "meta": meta,
                                "error": f"{type(exc).__name__}: {exc}"})
@@ -832,7 +857,7 @@ class BatchWorker(QThread):
             self.row.emit({
                 "photo": str(f), "name": f.name, "meta": meta,
                 "candidate_source": source, "candidates": len(cands),
-                "ranked": ranked, "seconds": time.time() - t0,
+                "ranked": ranked, "personal": person, "seconds": time.time() - t0,
                 "error": None,
             })
             done += 1
@@ -1175,7 +1200,7 @@ class MainWindow(QMainWindow):
         v.addWidget(self.prog)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["#", "Species", "Probability", "From"])
+        self.table.setHorizontalHeaderLabels(["#", "Species", "Score", "From"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         hdr = self.table.horizontalHeader()
@@ -1216,7 +1241,7 @@ class MainWindow(QMainWindow):
         bw = QWidget(); bl = QVBoxLayout(bw)
         self.btable = QTableWidget(0, 6)
         self.btable.setHorizontalHeaderLabels(
-            ["Photo", "Taken", "GPS", "Most likely species", "Prob", "Source"])
+            ["Photo", "Taken", "GPS", "Most likely species", "Score", "From"])
         self.btable.verticalHeader().setVisible(False)
         self.btable.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.btable.itemDoubleClicked.connect(self._open_batch_row)
@@ -2190,7 +2215,15 @@ class MainWindow(QMainWindow):
         for i, r in enumerate(rows):
             self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
             self.table.setItem(i, 1, QTableWidgetItem(r["name"]))
-            it = QTableWidgetItem(f"{r['score']*100:.2f}%")
+            # A cosine similarity and a softmax probability are different quantities on
+            # different scales; printing both as "%" invited reading 0.93 as 93% sure.
+            personal_row = r["source"] == "your labels"
+            it = QTableWidgetItem(f"sim {r['score']:.2f}" if personal_row
+                                  else f"{r['score']*100:.2f}%")
+            if personal_row:
+                it.setToolTip("cosine similarity to your closest labelled photo — not a "
+                              "probability; the margin to the runner-up is what says how "
+                              "much to trust it")
             if i == 0:
                 it.setForeground(QColor("#047857"))
             self.table.setItem(i, 2, it)
@@ -2416,6 +2449,8 @@ class MainWindow(QMainWindow):
             month_override=self.month.currentData() or None,
             spec=self.group.currentData(),
             files=files,
+            personal=self._personal_set(),
+            use_centroids=bool(self.cfg.get("personal_use_centroids", False)),
         )
         self.batch.row.connect(self._on_batch_row)
         self.batch.progress.connect(self._on_batch_progress)
@@ -2444,7 +2479,20 @@ class MainWindow(QMainWindow):
         self.btable.insertRow(i)
         meta = r.get("meta") or {}
         ranked = r.get("ranked") or []
+        person = r.get("personal") or None
         top = ranked[0] if ranked else None
+        # The label answer leads the row when there is one: it is the more accurate arm on
+        # species the user has labelled, and a batch run is where that matters most.
+        if person and person.get("ranked"):
+            lead_name = person["ranked"][0][0]
+            lead_score = f"sim {person['ranked'][0][1]:.2f}"
+            lead_src = f"your labels ({person.get('confidence')})"
+        elif top:
+            lead_name = top["name"]
+            lead_score = f"{top['score']*100:.2f}%"
+            lead_src = r.get("candidate_source", "")
+        else:
+            lead_name, lead_score, lead_src = f"ERROR: {r.get('error') or '?'}", "", ""
         gps = "—" if meta.get("lat") is None else f"{meta['lat']:.3f}, {meta['lon']:.3f}"
         taken = (str(meta.get("datetime"))[:16].replace("T", " ")
                  if meta.get("datetime") else "—")
@@ -2452,18 +2500,29 @@ class MainWindow(QMainWindow):
             r.get("name", "?"),
             taken,
             gps,
-            (top["name"] if top else f"ERROR: {r.get('error') or '?'}"),
-            (f"{top['score']*100:.2f}%" if top else ""),
-            r.get("candidate_source", ""),
+            lead_name,
+            lead_score,
+            lead_src,
         ]
         for c, val in enumerate(cells):
             it = QTableWidgetItem(str(val))
             if c == 0:
                 it.setToolTip(r.get("photo", ""))
-            if c == 3 and top:
-                it.setToolTip(" · ".join(f"{x['name']} ({x['score']*100:.1f}%)"
-                                         for x in ranked[:5]))
+            if c == 3:
+                bits = []
+                if person and person.get("ranked"):
+                    bits.append(f"your labels: {person['ranked'][0][0]} "
+                                f"(margin {person.get('margin', 0):.3f}, "
+                                f"{person.get('confidence')})")
+                if ranked:
+                    bits.append("text: " + " · ".join(
+                        f"{x['name']} ({x['score']*100:.1f}%)" for x in ranked[:5]))
+                it.setToolTip("\n".join(bits))
                 it.setForeground(QColor("#047857"))
+            if c == 5 and person:
+                it.setForeground(QColor("#1d4ed8"
+                                        if person.get("confidence") == "confident"
+                                        else "#b45309"))
             self.btable.setItem(i, c, it)
 
     def _on_batch_done(self, count: int, msg: str) -> None:
@@ -2665,6 +2724,7 @@ class MainWindow(QMainWindow):
     def _flatten(r: dict) -> dict:
         meta = r.get("meta") or {}
         ranked = r.get("ranked") or []
+        person = r.get("personal") or {}
         row = {
             "photo": r.get("photo", ""),
             "filename": r.get("name", ""),
@@ -2674,6 +2734,14 @@ class MainWindow(QMainWindow):
             "camera": meta.get("camera") or "",
             "candidate_source": r.get("candidate_source", ""),
             "candidates_scored": r.get("candidates", ""),
+            # The label arm, kept in its own columns: its score is a cosine similarity
+            # and must never be read as a probability beside the text scores.
+            "your_labels_species": person.get("top") or "",
+            "your_labels_similarity": (f"{person.get('score', 0):.4f}"
+                                       if person.get("top") else ""),
+            "your_labels_margin": (f"{person.get('margin', 0):.4f}"
+                                   if person.get("top") else ""),
+            "your_labels_confidence": person.get("confidence") or "",
             "seconds": round(r.get("seconds", 0) or 0, 2),
             "error": r.get("error") or "",
         }
