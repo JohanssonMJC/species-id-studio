@@ -558,8 +558,15 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
                         group_keys.append((k, resolved))
                 if group_keys:
                     taxon_key = group_keys[0][0]
-                    label = (group_keys[0][1] if len(group_keys) == 1 else
-                             f"{gname}: " + " + ".join(r for _, r in group_keys))
+                    # Keep this SHORT: it reaches the GUI as part of a label, and a
+                    # 24-order union rendered in full (695 characters) made the window
+                    # wider than the screen. Name the first taxon and count the rest.
+                    if len(group_keys) == 1:
+                        label = group_keys[0][1]
+                    else:
+                        first = group_keys[0][1] or "taxon"
+                        label = (f"{gname}: {first} + {len(group_keys) - 1} more "
+                                 f"({len(group_keys)} taxa)")
                 else:
                     label = f"{gname} (no GBIF filter)"
             else:

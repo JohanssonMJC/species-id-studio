@@ -500,6 +500,12 @@ tried, 13 answer `NONE` because GBIF keeps the newer ones *inside* Perciformes â
 Gobiiformes, Acanthuriformes, Carangiformes, Labriformes, Blenniiformes and others all fold
 back into it, which is why Perciformes alone carries hundreds of species at one place.
 
+The union also has to stay out of the GUI: the group's spec is a list of (name, rank)
+tuples, and rendering it in the candidate-count label put 695 characters on one line and
+pushed the window past the screen edge. Unions are summarised as "Perciformes + 23 more
+taxa", the label wraps and yields its width (`QSizePolicy.Ignored`), and the count is
+hard-capped at 60 characters even if something unexpected arrives.
+
 Measured at Batangas (13.715, 120.896, 100 km): **1,990 species, up from 119**, of which 867
 are in this project's curated fish list and the rest are GBIF names the 2009 list lacks. The
 cost is encoding time: ~126 s for the first identification against ~8 s for the truncated

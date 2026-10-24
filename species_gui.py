@@ -1061,6 +1061,15 @@ class MainWindow(QMainWindow):
         # notice that a list is empty, tiny, or unexpectedly huge.
         self.cand_count = QLabel()
         self.cand_count.setStyleSheet("font-weight:600;")
+        # This label must NEVER be able to widen the window. A long group description
+        # (a 24-order union rendered in full is 695 characters) inflated the row, the
+        # left pane and the whole window past the screen edge. Wrapping plus an Ignored
+        # horizontal policy means the layout gives it whatever width is available and it
+        # wraps instead of demanding more; the full text stays in the tooltip.
+        self.cand_count.setWordWrap(True)
+        self.cand_count.setMinimumWidth(0)
+        self.cand_count.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                      QSizePolicy.Policy.Preferred)
         self.cand_count.setToolTip(
             "Names the classifier will score against. More names encode slower and "
             "blunt the top pick's confidence, so a regional or group-narrowed list "
@@ -1589,6 +1598,10 @@ class MainWindow(QMainWindow):
         except Exception:
             n = 0
         grp = getattr(self, "cand_group", "")
+        # Hard cap as well as wrapping: an unexpected long description must never reach
+        # the layout at full length. 60 characters is more than any real group needs.
+        if len(grp) > 60:
+            grp = grp[:57].rstrip() + "…"
         suffix = f" — {grp}" if grp else ""
         if n == 0:
             self.cand_count.setText("0 candidates")
@@ -1772,7 +1785,13 @@ class MainWindow(QMainWindow):
             self.find_btn.setEnabled(on)
 
     def _group_label_for_vision(self) -> str:
-        """Clean, human label for the taxon currently selected, for the count."""
+        """Clean, human label for the taxon currently selected, for the count.
+
+        Must stay SHORT. This goes into the candidate-count label, and when a group maps
+        to a union the raw spec is a list of (name, rank) tuples — rendering that put 695
+        characters on one line and pushed the window past the screen edge. Unions are
+        summarised to "first + N more".
+        """
         try:
             label = self.group.currentText()
         except Exception:
@@ -1785,10 +1804,17 @@ class MainWindow(QMainWindow):
             gname = gbif_candidates.group_from_spec(self.group.currentData())
             if gname:
                 taxon = gbif_candidates.GROUP_TAXA.get(gname, (None, None))[0]
-        # bony fishes have no GBIF key, so say that rather than pretending.
-        if taxon:
+        # No GBIF filter for this group: say so rather than pretending.
+        if not taxon:
+            return f"{short} (GBIF can't filter this group)"
+        if isinstance(taxon, str):
             return taxon
-        return f"{short} (GBIF can't filter this group)"
+        names = [n for n, _ in taxon if n]
+        if not names:
+            return f"{short} (GBIF can't filter this group)"
+        if len(names) == 1:
+            return names[0]
+        return f"{names[0]} + {len(names) - 1} more taxa"
 
     def _on_gbif(self, names: list[str], info: str) -> None:
         self.gbif_btn.setEnabled(self.online_chk.isChecked())
