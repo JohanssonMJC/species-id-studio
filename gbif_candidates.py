@@ -287,6 +287,47 @@ def _save_cache(d: dict) -> None:
         pass
 
 
+def lookup_species(name: str) -> dict:
+    """What GBIF knows about one name, queried through api.gbif.org.
+
+    This exists because the website cannot be used for it: every deep link on
+    www.gbif.org (/species/…, /occurrence/…) is refused by Cloudflare on this network
+    while the homepage loads normally — verified in a real browser, not just curl. The
+    API answers fine, so the app asks the API and shows the answer itself instead of
+    opening a page that will not render.
+
+    Returns a dict with the match verdict even when nothing matches, because "GBIF does
+    not know this name" is the useful answer in that case.
+    """
+    d = _get("species/match", name=name, strict="false")
+    out = {
+        "query": name,
+        "matchType": d.get("matchType"),
+        "status": d.get("status"),
+        "rank": d.get("rank"),
+        "scientificName": d.get("scientificName"),
+        "canonicalName": d.get("canonicalName"),
+        "accepted": d.get("acceptedScientificName"),
+        "usageKey": d.get("usageKey"),
+        "kingdom": d.get("kingdom"),
+        "phylum": d.get("phylum"),
+        "class": d.get("class"),
+        "order": d.get("order"),
+        "family": d.get("family"),
+        "genus": d.get("genus"),
+        "confidence": d.get("confidence"),
+        "records": None,
+    }
+    key = d.get("usageKey") or d.get("speciesKey")
+    if key:
+        try:
+            occ = _get("occurrence/search", taxonKey=key, limit=0)
+            out["records"] = occ.get("count")
+        except Exception:
+            out["records"] = None
+    return out
+
+
 def resolve_taxon_key(name: str, rank: str | None = None
                       ) -> tuple[int | None, str]:
     """GBIF backbone key for a taxon name. Cached on disk.

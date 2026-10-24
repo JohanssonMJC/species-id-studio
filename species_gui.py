@@ -359,6 +359,25 @@ def get_engine():
 # --------------------------------------------------------------------------- #
 # Tier 1 — BioCLIP in a thread (model load is ~4 s, inference ~0.3 s)
 # --------------------------------------------------------------------------- #
+class GbifLookupWorker(QThread):
+    """Ask api.gbif.org about one name, because the website cannot be opened for it."""
+    done = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    def run(self) -> None:
+        try:
+            if gbif_candidates is None:
+                self.failed.emit("gbif_candidates.py is missing from the app directory.")
+                return
+            self.done.emit(gbif_candidates.lookup_species(self.name))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class PersonalFitWorker(QThread):
     """Embed every labelled photo in a folder and save the prototypes.
 
@@ -1897,6 +1916,85 @@ class MainWindow(QMainWindow):
         self.log.appendPlainText("iNaturalist: " + msg)
         self.statusBar().showMessage(msg.replace("\n", " ")[:160], 15000)
 
+    # -- GBIF, in the app -------------------------------------------------- #
+    def lookup_gbif(self, name: str) -> None:
+        """Show what GBIF's backbone says about a name, without opening gbif.org.
+
+        The website is unusable for this on many networks: its Cloudflare layer answers
+        403 to every /species/… deep link while the homepage loads. The API answers fine,
+        so the verdict is fetched and displayed here — and it is the more useful answer
+        anyway, because it says whether the name is ACCEPTED, a SYNONYM, or unknown.
+        """
+        if gbif_candidates is None:
+            QMessageBox.warning(self, APP_NAME, "gbif_candidates.py is missing.")
+            return
+        if getattr(self, "gbif_worker", None):
+            return
+        self.log.appendPlainText(f"GBIF lookup: {name}  (api.gbif.org — the website "
+                                 f"refuses deep links on some networks)")
+        self.gbif_worker = GbifLookupWorker(name)
+        self.gbif_worker.done.connect(self._show_gbif)
+        self.gbif_worker.failed.connect(self._gbif_failed)
+        self._track(self.gbif_worker)
+        self.gbif_worker.start()
+
+    def _gbif_failed(self, msg: str) -> None:
+        self.gbif_worker = None
+        self.log.appendPlainText(f"GBIF lookup failed: {msg}")
+        QMessageBox.warning(self, APP_NAME, f"GBIF lookup failed.\n\n{msg}")
+
+    def _show_gbif(self, d: dict) -> None:
+        self.gbif_worker = None
+        mt = d.get("matchType") or "NONE"
+        name = d.get("query") or "?"
+        if mt == "NONE":
+            self.log.appendPlainText(f"GBIF: no match for “{name}”.")
+            QMessageBox.information(
+                self, APP_NAME,
+                f"GBIF does not know “{name}”.\n\n"
+                f"That usually means a misspelling, a name GBIF has not indexed, or a "
+                f"trade/common name rather than a scientific one.")
+            return
+        lines = [f"{name}", ""]
+        lines.append(f"match:      {mt}")
+        if d.get("status"):
+            lines.append(f"status:     {d['status']}")
+        if d.get("rank"):
+            lines.append(f"rank:       {d['rank']}")
+        if d.get("scientificName"):
+            lines.append(f"GBIF name:  {d['scientificName']}")
+        if d.get("accepted") and d.get("accepted") != d.get("scientificName"):
+            lines.append(f"accepted as: {d['accepted']}")
+        path = " › ".join(x for x in (d.get("kingdom"), d.get("phylum"), d.get("class"),
+                                      d.get("order"), d.get("family"), d.get("genus")) if x)
+        if path:
+            lines.append(f"lineage:    {path}")
+        if d.get("records") is not None:
+            lines.append(f"records:    {d['records']:,} worldwide")
+        if mt != "EXACT":
+            lines.append("")
+            lines.append("Not an EXACT match — GBIF is offering something close, so check "
+                         "the name rather than trusting it.")
+        text = "\n".join(lines)
+        self.log.appendPlainText("GBIF: " + text.replace("\n", " | "))
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(text)
+        box.setInformativeText("In-app lookup: gbif.org itself refuses deep links from "
+                               "some networks (Cloudflare 403).")
+        worms = box.addButton("Open in WoRMS", QMessageBox.ButtonRole.ActionRole)
+        inat = box.addButton("Open in iNaturalist", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is worms:
+            QDesktopServices.openUrl(QUrl(
+                "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar="
+                + name.replace(" ", "+")))
+        elif box.clickedButton() is inat:
+            QDesktopServices.openUrl(QUrl(
+                f"https://www.inaturalist.org/search?q={name}"))
+
     # -- your own labels --------------------------------------------------- #
     def _personal_set(self):
         """(prototypes, labels) when fitted and enabled, else None.
@@ -2430,9 +2528,16 @@ class MainWindow(QMainWindow):
         a3 = m.addAction("Open in iNaturalist (browser)")
         a3.triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(f"https://www.inaturalist.org/search?q={name}")))
-        a4 = m.addAction("Open in GBIF (browser)")
-        a4.triggered.connect(
-            lambda: QDesktopServices.openUrl(QUrl(f"https://www.gbif.org/species/search?q={name}")))
+        # NOT gbif.org: every deep link on that site is refused by Cloudflare on this
+        # network — the homepage loads, /species/… and /occurrence/… return 403 in a real
+        # browser. The API answers, so ask the API and show the verdict here.
+        a4 = m.addAction("Look up in GBIF (in this app)")
+        a4.triggered.connect(lambda: self.lookup_gbif(name))
+        a4b = m.addAction("Open in WoRMS (browser)")
+        a4b.triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl(
+                "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar="
+                + name.replace(" ", "+"))))
         a5 = m.addAction("Open in Google Images")
         a5.triggered.connect(
             lambda: QDesktopServices.openUrl(
@@ -2485,9 +2590,11 @@ class MainWindow(QMainWindow):
             m.addAction(f"Open “{selected}” in iNaturalist (browser)").triggered.connect(
                 lambda: QDesktopServices.openUrl(
                     QUrl(f"https://www.inaturalist.org/search?q={q}")))
-            m.addAction(f"Open “{selected}” in GBIF (browser)").triggered.connect(
-                lambda: QDesktopServices.openUrl(
-                    QUrl(f"https://www.gbif.org/species/search?q={q}")))
+            m.addAction(f"Look up “{selected}” in GBIF (in this app)").triggered.connect(
+                lambda: self.lookup_gbif(selected))
+            m.addAction(f"Open “{selected}” in WoRMS (browser)").triggered.connect(
+                lambda: QDesktopServices.openUrl(QUrl(
+                    "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar=" + q)))
             m.addAction(f"Search images for “{selected}”").triggered.connect(
                 lambda: QDesktopServices.openUrl(
                     QUrl(f"https://www.google.com/search?tbm=isch&q={q}")))
