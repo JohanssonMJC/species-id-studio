@@ -586,6 +586,46 @@ no candidate, but a hint that cannot distinguish two species should not be prese
 best available answer. When both arms name the same species there is one row, attributed to
 your labels — agreement is evidence, not a demotion.
 
+### Saving a copy named after the species
+
+Once an identification looks right you usually want the photo to carry the name. **File ▸ Save
+copies named by species** offers it in four forms, none of which needs a filename typed:
+
+| action | what happens |
+|---|---|
+| **Save a copy for this photo now** | copies the photo you are looking at |
+| right-click a result row → **Save a copy named “X”** | copies it under whichever row you pick |
+| **After each identification** (toggle) | does it automatically after every Identify |
+| **During batch runs** (toggle) / **Save copies for all batch results…** | one copy per batch row, now or afterwards |
+
+**The original is never moved, renamed or touched.** These are `shutil.copy2` copies, so EXIF
+and file dates survive. Copies go to a `_identified` folder beside each photo, or to a folder you
+choose once with **Choose where copies go…**.
+
+Three rules, each the result of a specific hazard:
+
+- **Never overwrite.** If `Chromodoris_annae.jpg` exists, the next one is
+  `Chromodoris_annae_2.jpg`. Two animals can legitimately share a name in your library, and
+  silently replacing the first would destroy a photo you cannot get back.
+- **Never duplicate.** The same photo identified again as the same species is skipped, not
+  copied twice; a *corrected* species does produce a new copy, because that is new information.
+- **Always leave a trail.** A filename cannot record which photo it came from, how confident the
+  identification was, or which arm produced it. Every copy appends a line to `manifest.csv`
+  beside it:
+
+```csv
+when,copy,source,species,confidence,arm,bytes
+2026-10-27 23:40:26,Chromodoris_annae.jpg,/photos/OI3A2349.jpg,Chromodoris annae,text,text,2804
+```
+
+`arm` is `your labels` or `text`, and `confidence` is that arm's verdict — so a folder of renamed
+copies can always be audited back to its evidence.
+
+**Skip identifications the app is unsure about** is on by default and skips answers flagged
+`weak`. It deliberately does *not* skip a text-arm answer, because that arm has no confidence
+scale to threshold — but the log says so plainly when a text-arm answer named the file, since a
+filename is a claim and "the text ranking's top pick" is a weaker one than "one of my labels".
+
 ### It flags, it does not refuse
 
 A rejection threshold cannot be made both safe and useful here. Measured with 24 verified

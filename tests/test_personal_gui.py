@@ -265,5 +265,57 @@ win.teach_current("Alpha beta")
 check("explains that nothing is fitted yet",
       any("no fitted classifier" in str(e).lower() for e in errors), errors)
 
+print("11. saving a copy named after the species")
+import shutil as _shutil
+work = pathlib.Path(tempfile.mkdtemp())
+photo = work / "OI3A2349.jpg"
+photo.write_bytes(b"\xff\xd8\xff\xe0" + b"fake jpeg" * 200)
+win.image_path = str(photo)
+win.cfg["save_copies_min_conf"] = "not_weak"
+win._on_bio({"ranked": [{"name": "Chromodoris annae", "score": 0.72}],
+             "candidates_scored": 880, "seconds": 1.0})
+check("top pick remembered for naming", win._top_pick()["species"] == "Chromodoris annae",
+      win._top_pick())
+win.save_copy_current()
+made = sorted(p.name for p in (work / "_identified").glob("*.jpg"))
+check("copy created under the species name", made == ["Chromodoris_annae.jpg"], made)
+check("original untouched", photo.is_file() and photo.name == "OI3A2349.jpg")
+rows = species_gui.save_copies.read_manifest(work / "_identified")
+check("one manifest row with provenance", len(rows) == 1 and rows[0]["species"] == "Chromodoris annae",
+      rows)
+win.save_copy_current()
+check("re-saving the same photo does not duplicate",
+      sorted(p.name for p in (work / "_identified").glob("*.jpg")) == ["Chromodoris_annae.jpg"])
+
+check("a weak label answer is refused by default",
+      win._should_save("weak", "Chromodoris annae")[0] is False,
+      win._should_save("weak", "Chromodoris annae"))
+check("a confident one is allowed",
+      win._should_save("confident", "Chromodoris annae")[0] is True)
+check("a missing name is refused", win._should_save("text", "")[0] is False)
+check("placeholder names are refused", win._should_save("text", "?")[0] is False)
+win.cfg["save_copies_min_conf"] = "any"
+check("the skip can be turned off", win._should_save("weak", "Chromodoris annae")[0] is True)
+win.cfg["save_copies_min_conf"] = "not_weak"
+
+print("12. batch copies use each row's own decision")
+win.results = [
+    {"photo": str(photo), "name": "a.jpg", "ranked": [{"name": "Thor amboinensis", "score": 0.5}],
+     "top_species": "Thor amboinensis", "top_confidence": "text", "top_arm": "text",
+     "error": None},
+    {"photo": str(photo), "name": "b.jpg", "ranked": [], "top_species": None,
+     "top_confidence": None, "top_arm": None, "error": None},
+]
+win.cfg["save_copies_dir"] = str(work / "sorted")
+win.save_copies_for_batch()
+check("one copy for the named row",
+      sorted(p.name for p in (work / "sorted").glob("*.jpg")) == ["Thor_amboinensis.jpg"],
+      list((work / "sorted").glob("*")))
+check("the row records where its copy went", win.results[0].get("copy_path", "").endswith(
+      "Thor_amboinensis.jpg"), win.results[0].get("copy_path"))
+check("the summary says originals are untouched",
+      "originals untouched" in win.log.toPlainText(), win.log.toPlainText()[-200:])
+_shutil.rmtree(work)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

@@ -79,6 +79,12 @@ except Exception as exc:                       # pragma: no cover
     personal_classifier = None
     print(f"[warn] personal_classifier.py not importable: {exc}", file=sys.stderr)
 
+try:
+    import save_copies
+except Exception as exc:                       # pragma: no cover
+    save_copies = None
+    print(f"[warn] save_copies.py not importable: {exc}", file=sys.stderr)
+
 APP_NAME = "Species ID Studio"
 # Tests and throwaway runs must point this elsewhere via SPECIES_CFG. Writing
 # test-derived locations into the real config makes the app start up pre-filled
@@ -111,6 +117,13 @@ DEFAULTS = {
     # with labels, against 65.0% for text ranking alone).
     "personal_enabled": True,
     "personal_use_centroids": False,
+    # Saving a copy under the species name. Off by default: it writes files next to your
+    # photos, so it should be something you asked for. The original is never touched — see
+    # save_copies.py for the rules (copy only, never overwrite, always leave a manifest).
+    "save_copies": False,          # after each single-photo identification
+    "save_copies_batch": False,    # during / after a batch run
+    "save_copies_min_conf": "not_weak",   # "any" | "not_weak" | "confident_only"
+    "save_copies_dir": "",         # "" = a "_identified" folder beside each photo
 }
 
 
@@ -967,6 +980,29 @@ class MainWindow(QMainWindow):
         e1.triggered.connect(lambda: self.export("csv")); m.addAction(e1)
         e2 = QAction("Export results as JSON…", self)
         e2.triggered.connect(lambda: self.export("json")); m.addAction(e2)
+
+        # Saving copies is deliberately its own submenu: it writes files beside your photos.
+        c = m.addMenu("Save copies named by species")
+        a = QAction("After each identification", self); a.setCheckable(True)
+        a.setChecked(bool(self.cfg.get("save_copies", False)))
+        a.toggled.connect(self._toggle_save_copies); c.addAction(a)
+        self.save_copies_action = a
+        a = QAction("During batch runs", self); a.setCheckable(True)
+        a.setChecked(bool(self.cfg.get("save_copies_batch", False)))
+        a.toggled.connect(self._toggle_save_copies_batch); c.addAction(a)
+        self.save_copies_batch_action = a
+        c.addSeparator()
+        a = QAction("Skip identifications the app is unsure about", self); a.setCheckable(True)
+        a.setChecked(self.cfg.get("save_copies_min_conf", "not_weak") != "any")
+        a.toggled.connect(self._toggle_save_copies_conf); c.addAction(a)
+        self.save_copies_conf_action = a
+        c.addSeparator()
+        a = QAction("Save a copy for this photo now", self)
+        a.triggered.connect(lambda: self.save_copy_current(force=True)); c.addAction(a)
+        a = QAction("Save copies for all batch results…", self)
+        a.triggered.connect(self.save_copies_for_batch); c.addAction(a)
+        a = QAction("Choose where copies go…", self)
+        a.triggered.connect(self.choose_save_dir); c.addAction(a)
         m.addSeparator()
         q = QAction("Quit", self); q.setShortcut(QKeySequence.StandardKey.Quit)
         q.triggered.connect(self.close); m.addAction(q)
@@ -2169,6 +2205,181 @@ class MainWindow(QMainWindow):
             self.reason_for_path = None
         self._update_reason_caption()
 
+    # -- saving a copy named after the species ----------------------------- #
+    def _top_pick(self) -> dict | None:
+        """The species the table is currently putting first, with its provenance.
+
+        Read from the table rather than from last_ranking, so it reflects exactly what the
+        user can see — including the group-scope rule that can drop a label answer.
+        """
+        if getattr(self, "last_top", None) and self.last_top.get("species"):
+            return self.last_top
+        if self.table.rowCount() == 0:
+            return None
+        name = self.table.item(0, 1).text() if self.table.item(0, 1) else ""
+        src = self.table.item(0, 3).text() if self.table.item(0, 3) else ""
+        conf = ("weak" if "(weak)" in src else "uncertain" if "(uncertain)" in src
+                else "confident" if src.startswith("your labels") else "text")
+        return {"species": name, "confidence": conf,
+                "arm": "your labels" if src.startswith("your labels") else "text"}
+    def _save_target_dir(self, src: str) -> str | None:
+        """Configured folder, or None meaning "a _identified folder beside the photo"."""
+        configured = str(self.cfg.get("save_copies_dir") or "").strip()
+        return configured or None
+
+    def _conf_rank(self) -> int:
+        """0 = save anything, 1 = not weak, 2 = confident only."""
+        return {"any": 0, "not_weak": 1, "confident_only": 2}.get(
+            str(self.cfg.get("save_copies_min_conf") or "not_weak"), 1)
+
+    def _should_save(self, confidence: str | None, species: str | None) -> tuple[bool, str]:
+        """Whether an identification is good enough to stamp onto a filename."""
+        if not species or not str(species).strip() or str(species).strip() in ("?", "unidentified"):
+            return False, "no usable species name"
+        want = self._conf_rank()
+        conf = (confidence or "text").lower()
+        if want >= 2 and conf not in ("confident",):
+            return False, f"needs a confident answer (this one is {conf})"
+        if want >= 1 and conf == "weak":
+            return False, "answer is weak — turn off “Skip identifications the app is unsure about” to save it anyway"
+        return True, ""
+
+    def save_copy_current(self, force: bool = False) -> None:
+        """Copy the photo now on screen under its identified species name."""
+        if save_copies is None:
+            QMessageBox.warning(self, APP_NAME, "save_copies.py is missing.")
+            return
+        if not self.image_path:
+            QMessageBox.information(self, APP_NAME, "Open a photo first.")
+            return
+        top = self._top_pick()
+        if not top:
+            QMessageBox.information(
+                self, APP_NAME,
+                "Nothing identified yet — run Identify first, so the copy can be named "
+                "after the species.")
+            return
+        ok, why = self._should_save(top.get("confidence"), top.get("species"))
+        if not ok and not force:
+            self.log.appendPlainText(f"copy not saved: {why}")
+            self.statusBar().showMessage("not saved — see the log", 15000)
+            return
+        rep = self._do_save_copy(self.image_path, top.get("species"), top.get("confidence"),
+                                 top.get("arm"))
+        if rep.get("saved"):
+            self.log.appendPlainText(
+                f"copy saved: {Path(rep['dest']).name}  (from {Path(rep['source']).name}; "
+                f"original untouched; {rep.get('bytes', 0):,} bytes)")
+            # Say which arm named the file. A filename is a claim, and "the text arm's top
+            # pick" is a weaker claim than "one of your own labels" — the manifest records
+            # it, but you should not have to open the manifest to find out.
+            if top.get("arm") == "text":
+                self.log.appendPlainText(
+                    "  named by the text-ranking arm (no label matched), so the name has no "
+                    "confidence attached — check it, or teach the photo a label and re-save.")
+            self.statusBar().showMessage(f"copy saved as {Path(rep['dest']).name}", 20000)
+        else:
+            self.log.appendPlainText(
+                f"copy not saved: {rep.get('reason')}"
+                + (f" ({rep.get('dest')})" if rep.get("dest") else ""))
+            self.statusBar().showMessage(f"not saved: {rep.get('reason')}", 20000)
+
+    def save_copy_named(self, species: str) -> None:
+        """Save a copy under a species the user picked from the table (still no typing)."""
+        if save_copies is None or not self.image_path:
+            return
+        conf = None
+        for i in range(self.table.rowCount()):
+            nm = self.table.item(i, 1)
+            if nm and nm.text() == species:
+                src = self.table.item(i, 3).text() if self.table.item(i, 3) else ""
+                conf = ("weak" if "(weak)" in src else "uncertain" if "(uncertain)" in src
+                        else "confident" if src.startswith("your labels") else "text")
+                break
+        rep = self._do_save_copy(self.image_path, species, conf,
+                                 "your labels" if conf in ("confident", "uncertain", "weak")
+                                 else "text")
+        if rep.get("saved"):
+            self.log.appendPlainText(f"copy saved: {Path(rep['dest']).name}")
+            self.statusBar().showMessage(f"copy saved as {Path(rep['dest']).name}", 20000)
+        else:
+            self.log.appendPlainText(f"copy not saved: {rep.get('reason')}")
+
+    def _do_save_copy(self, src: str, species: str, confidence, arm) -> dict:
+        # One call, one manifest row: appending a second row from here produced a blank
+        # prov-enance line followed by a filled one, which reads like two saves.
+        target = self._save_target_dir(src)
+        return save_copies.save_copy(src, species, target_dir=target,
+                                     confidence=confidence, arm=arm)
+
+    def save_copies_for_batch(self) -> None:
+        """Save a copy for every batch result, skipping the ones that should be skipped."""
+        if save_copies is None:
+            QMessageBox.warning(self, APP_NAME, "save_copies.py is missing.")
+            return
+        rows = [r for r in getattr(self, "results", []) if not r.get("error")]
+        if not rows:
+            QMessageBox.information(self, APP_NAME,
+                                    "No batch results yet — run a batch folder first.")
+            return
+        saved = skipped = failed = 0
+        reasons: dict[str, int] = {}
+        for r in rows:
+            species = r.get("top_species") or (r.get("ranked") or [{}])[0].get("name")
+            conf = r.get("top_confidence")
+            ok, why = self._should_save(conf, species)
+            if not ok:
+                skipped += 1
+                reasons[why] = reasons.get(why, 0) + 1
+                continue
+            rep = self._do_save_copy(r.get("photo", ""), species, conf, r.get("top_arm"))
+            if rep.get("saved"):
+                saved += 1
+                r["copy_path"] = rep["dest"]
+            elif rep.get("reason") == "already saved":
+                skipped += 1
+                reasons["already saved earlier"] = reasons.get("already saved earlier", 0) + 1
+            else:
+                failed += 1
+                reasons[str(rep.get("reason"))] = reasons.get(str(rep.get("reason")), 0) + 1
+        where = str(self.cfg.get("save_copies_dir") or "a _identified folder beside each photo")
+        lines = [f"copies: {saved} saved, {skipped} skipped, {failed} failed",
+                 f"target: {where}",
+                 "originals untouched (copies only)"]
+        for why, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            lines.append(f"  {n}× {why}")
+        self.log.appendPlainText("\n".join(lines))
+        self.statusBar().showMessage(f"copies saved: {saved}", 20000)
+        QMessageBox.information(self, APP_NAME, "\n".join(lines))
+
+    def _toggle_save_copies(self, on: bool) -> None:
+        self.cfg["save_copies"] = bool(on)
+        save_cfg(self.cfg)
+        if on:
+            self.log.appendPlainText(
+                "copies: after each identification the photo is copied as Genus_species.jpg "
+                "(originals are never moved or renamed).")
+
+    def _toggle_save_copies_batch(self, on: bool) -> None:
+        self.cfg["save_copies_batch"] = bool(on)
+        save_cfg(self.cfg)
+
+    def _toggle_save_copies_conf(self, on: bool) -> None:
+        self.cfg["save_copies_min_conf"] = "not_weak" if on else "any"
+        save_cfg(self.cfg)
+
+    def choose_save_dir(self) -> None:
+        start = str(self.cfg.get("save_copies_dir") or
+                    self.cfg.get("last_batch_dir") or Path.home())
+        folder = QFileDialog.getExistingDirectory(
+            self, "Where should copies go? (Cancel = beside each photo in _identified)", start)
+        if not folder:
+            return
+        self.cfg["save_copies_dir"] = folder
+        save_cfg(self.cfg)
+        self.log.appendPlainText(f"copies will be written to {folder}")
+        self.statusBar().showMessage(f"copies → {folder}", 15000)
+
     # -- teaching a photo a label ------------------------------------------ #
     def teach_current(self, species: str | None) -> None:
         """Record this photo as a labelled example of `species`.
@@ -2513,6 +2724,14 @@ class MainWindow(QMainWindow):
                 f"text rows come from the candidate-list ranking and cover species you "
                 f"have not labelled.")
         self.statusBar().showMessage(f"Top pick: {top}", 20000)
+        # remember what was decided, for "save a copy" (it must not re-derive a different name)
+        if rows:
+            first = rows[0]
+            self.last_top = {"species": first["name"],
+                             "confidence": first.get("confidence") or "text",
+                             "arm": "your labels" if first["source"] == "your labels" else "text"}
+            if bool(self.cfg.get("save_copies", False)) and save_copies is not None:
+                self.save_copy_current()
 
     def _ranking_for_vision(self) -> list[tuple[str, float]]:
         """The BioCLIP ranking, but only if it was computed for the current photo."""
@@ -2761,6 +2980,21 @@ class MainWindow(QMainWindow):
             lead_score,
             lead_src,
         ]
+        # Keep the naming decision with the row: a later "save copies" must use the same
+        # species this row displays, not re-run the ranking.
+        r["top_species"] = lead_name
+        r["top_confidence"] = (person.get("confidence") if person
+                               else ("text" if top else None))
+        r["top_arm"] = ("your labels" if person else r.get("candidate_source", "text"))
+        if bool(self.cfg.get("save_copies_batch", False)) and save_copies is not None \
+                and not r.get("error"):
+            ok, _why = self._should_save(r["top_confidence"], r["top_species"])
+            if ok:
+                rep = self._do_save_copy(r.get("photo", ""), r["top_species"],
+                                         r["top_confidence"], r["top_arm"])
+                if rep.get("saved"):
+                    r["copy_path"] = rep["dest"]
+
         for c, val in enumerate(cells):
             it = QTableWidgetItem(str(val))
             if c == 0:
@@ -2863,6 +3097,8 @@ class MainWindow(QMainWindow):
                 "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar="
                 + name.replace(" ", "+"))))
         m.addSeparator()
+        a5b = m.addAction(f"Save a copy named “{name}”")
+        a5b.triggered.connect(lambda: self.save_copy_named(name))
         a6 = m.addAction(f"Teach this photo as “{name}”")
         a6.triggered.connect(lambda: self.teach_current(name))
         a7 = m.addAction("Teach as another species…")
