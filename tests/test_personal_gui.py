@@ -378,5 +378,61 @@ check("saving with nothing ticked says so",
 check("and writes nothing", len(list((work2 / "ticked").glob("*.jpg"))) == saved_before)
 _shutil.rmtree(work2)
 
+print("15. a worker must not be destroyed from inside its own run()")
+# The class of bug: a slot connected to a signal the worker emits DURING run() drops the
+# last reference to the QThread, so its destructor runs while the thread is alive. Qt then
+# calls qFatal -> the whole process aborts, which is what "the app crashed" looked like.
+# Any slot that does `self.<worker> = None` is that bug; only _reap() may clear them.
+import threading, time
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class _SlowWorker(QThread):
+    done = pyqtSignal(dict)
+    def __init__(self):
+        super().__init__()
+        self.gate = threading.Event()
+    def run(self):
+        self.done.emit({"added": True, "photos": 1, "species": 1,
+                        "examples_for_species": 1, "provenance": {}})
+        self.gate.wait(5.0)          # stay inside run() while the slot executes
+
+win.teach_worker = _SlowWorker()
+win._track(win.teach_worker)
+win.teach_worker.start()
+time.sleep(0.2)
+check("the worker is running", win.teach_worker.isRunning())
+win._on_teach({"added": True, "photos": 1, "species": 1,
+               "examples_for_species": 1, "provenance": {}})
+check("the reference survives its own result slot", win.teach_worker is not None,
+      "the slot nulled it while run() was still on the stack")
+alive = win.teach_worker
+win.teach_worker.gate.set()
+alive.wait(3000)
+for _ in range(50):
+    app.processEvents()
+    if win.teach_worker is None:
+        break
+    time.sleep(0.02)
+check("_reap clears it once the thread has finished", win.teach_worker is None)
+
+# and a source check, so this cannot come back: outside __init__ (which legitimately
+# starts them as None) only _reap() may clear a worker reference.
+import re as _re
+_src = pathlib.Path("species_gui.py").read_text().splitlines()
+
+def _enclosing(lineno):
+    for i in range(lineno - 1, -1, -1):
+        m = _re.match(r"\s*def (\w+)\(", _src[i])
+        if m:
+            return m.group(1)
+    return "?"
+
+_pat = _re.compile(r"self\.(worker|api|batch|placer|gbiFer|teach_worker|"
+                   r"personal_worker|gbif_worker|place_worker|reason_worker)\s*=\s*None")
+offenders = [f"line {n} in {_enclosing(n)}(): {line.strip()}"
+             for n, line in enumerate(_src, 1)
+             if _pat.search(line) and _enclosing(n) != "__init__"]
+check("only _reap() clears worker references", not offenders, offenders)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

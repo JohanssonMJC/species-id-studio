@@ -1478,16 +1478,13 @@ class MainWindow(QMainWindow):
         is the only safe place to clear it.
         """
         w = self.sender()
-        if w is self.worker:
-            self.worker = None
-        if w is getattr(self, "api", None):
-            self.api = None
-        if w is getattr(self, "batch", None):
-            self.batch = None
-        if w is getattr(self, "placer", None):
-            self.placer = None
-        if w is getattr(self, "gbiFer", None):
-            self.gbiFer = None
+        # Every tracked worker, not a hand-written subset: teach_worker was missing here
+        # while its result slot also nulled the reference itself, so "Teach from photo"
+        # destroyed a QThread from inside its own run() and the process aborted.
+        for attr in ("worker", "api", "batch", "placer", "gbiFer", "teach_worker",
+                     "personal_worker", "gbif_worker", "place_worker", "reason_worker"):
+            if w is not None and getattr(self, attr, None) is w:
+                setattr(self, attr, None)
         if w is not None:
             w.deleteLater()
 
@@ -2136,12 +2133,10 @@ class MainWindow(QMainWindow):
         self.gbif_worker.start()
 
     def _gbif_failed(self, msg: str) -> None:
-        self.gbif_worker = None
         self.log.appendPlainText(f"GBIF lookup failed: {msg}")
         QMessageBox.warning(self, APP_NAME, f"GBIF lookup failed.\n\n{msg}")
 
     def _show_gbif(self, d: dict) -> None:
-        self.gbif_worker = None
         mt = d.get("matchType") or "NONE"
         name = d.get("query") or "?"
         if mt == "NONE":
@@ -2482,7 +2477,6 @@ class MainWindow(QMainWindow):
         self.teach_worker.start()
 
     def _on_teach(self, out: dict) -> None:
-        self.teach_worker = None
         if not out.get("added"):
             self.log.appendPlainText(f"Not added: {out.get('reason')}.")
             self.statusBar().showMessage("Already have that photo", 15000)
@@ -2504,7 +2498,6 @@ class MainWindow(QMainWindow):
             f"Learned {out['species']} — {out['photos']} labelled photos", 20000)
 
     def _on_teach_fail(self, msg: str) -> None:
-        self.teach_worker = None
         self.log.appendPlainText(f"Could not add the label: {msg}")
         QMessageBox.warning(self, APP_NAME, f"Could not add the label.\n\n{msg}")
 
@@ -2552,7 +2545,6 @@ class MainWindow(QMainWindow):
         self.personal_worker.start()
 
     def _on_fit(self, meta: dict) -> None:
-        self.personal_worker = None
         self.prog.setValue(100)
         self.prog.setFormat(f"fitted — {meta.get('species')} species")
         self._personal_cache = (None, None)          # force a reload on next identify
@@ -2573,7 +2565,6 @@ class MainWindow(QMainWindow):
             f"Fitted from your labels: {meta.get('species')} species", 20000)
 
     def _on_fit_fail(self, msg: str) -> None:
-        self.personal_worker = None
         self.prog.setFormat("fit failed")
         self.log.appendPlainText(f"Fitting failed: {msg}")
         QMessageBox.warning(self, APP_NAME, f"Could not fit from that folder.\n\n{msg}")
@@ -3432,6 +3423,11 @@ def selftest(cfg: dict) -> int:
 
 
 def main() -> int:
+    # Qt loads the ATK accessibility bridge at start-up and prints
+    #   "Not loading module 'atk-bridge' … provided by GTK natively"
+    # GTK already provides it, so the second load is pointless noise. This asks Qt not to
+    # attempt it; Qt's own accessibility still works. Export NO_AT_BRIDGE=0 to undo.
+    os.environ.setdefault("NO_AT_BRIDGE", "1")
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--vision-port", type=int)
     ap.add_argument("--image")
