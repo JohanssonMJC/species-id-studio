@@ -1883,11 +1883,16 @@ class MainWindow(QMainWindow):
                     "AREA is not where you think (a place name can resolve to a "
                     "same-named town far away — check the coordinates shown above), or "
                     "the radius is too tight.")
+        # Name the place you asked for alongside the coordinates. Coordinates alone hide a
+        # wrong pick: "Bintang" (Papua highlands) and "Bitung" (Lembeh Strait) are one
+        # letter apart and 2,000 km from each other, and only the name shows which was used.
+        body = info[len("GBIF: "):] if info.startswith("GBIF: ") else info
+        where = (f"{self.place_label} — " if self.place_label else "")
         if replace:
-            self.log.appendPlainText(f"GBIF: {info}" + hint)
+            self.log.appendPlainText(f"GBIF: {where}{body}" + hint)
         else:
             self.log.appendPlainText(
-                f"GBIF: {info}; kept {kept} already loaded (add mode)" + hint)
+                f"GBIF: {where}{body}; kept {kept} already loaded (add mode)" + hint)
         self.statusBar().showMessage(
             f"GBIF loaded {len(names):,} recorded species (most-recorded first)"
             + hint, 20000)
