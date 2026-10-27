@@ -202,14 +202,33 @@ GROUPS: list[tuple[str, dict]] = [
     ("sea · starfish & sea urchins", {"taxa": [47668, 47548]}),
     ("sea · sea cucumbers", {"taxa": [47720]}),
     ("sea · clams, mussels & oysters", {"taxa": [47584]}),
+    # Gastropoda, the class — sea snails, cones, cowries, ovulids, whelks, limpets. It sat
+    # at the bottom labelled "snails & slugs (land and sea)" and was effectively invisible:
+    # a diver holding a Triton shell looks under the sea groups, where bivalves and
+    # nudibranchs already were. It stays the whole class because neither iNaturalist nor
+    # GBIF can restrict Gastropoda to the sea — see the tooltip — and the curated offline
+    # equivalent is Marine list… ▸ sea snails, cones & cowries (1,353 names).
+    ("sea · sea snails, cones & cowries", {"taxa": [47114]}),
     ("sea · sponges & sea squirts", {"taxa": [48824, 47811]}),
     ("sea · not sure which group", {"taxa": [47178, 47113, 47187, 47533]}),
     ("", {}),
-
-    ("snails & slugs (land and sea)", {"taxa": [47114]}),
 ]
 
 GROUP_LABELS = [label for label, _ in GROUPS]
+
+# Tooltips for groups whose label cannot carry the caveat.
+GROUP_TIPS = {
+    "sea · sea snails, cones & cowries":
+        "Gastropoda — sea snails, cones, cowries, ovulids, whelks, limpets.\n\n"
+        "Neither iNaturalist nor GBIF can restrict a group to marine-only, so land snails "
+        "recorded at the same place can appear; at a dive site almost everything recorded "
+        "there is marine.\n\n"
+        "For a curated offline list of sea snails only (1,353 names), use "
+        "Marine list… ▸ sea snails, cones & cowries.",
+    "sea · clams, mussels & oysters":
+        "Bivalvia — clams, mussels, oysters, scallops. Chitons are a different class and "
+        "are in Marine list… ▸ bivalves & chitons.",
+}
 
 # --- the user's own modernised marine keyword lists -------------------------
 # NOT shipped (see docs/REGENERATE.md): built locally from a MarineLife Keywords 1.0
@@ -1192,6 +1211,10 @@ class MainWindow(QMainWindow):
                 self.group.insertSeparator(self.group.count())
             else:
                 self.group.addItem(label, val)
+                tip = GROUP_TIPS.get(label)
+                if tip:
+                    self.group.setItemData(self.group.count() - 1, tip,
+                                           Qt.ItemDataRole.ToolTipRole)
         self.group.setCurrentIndex(0)
         self.group.setToolTip(
             "What kind of organism is it? You rarely know the species, but you "

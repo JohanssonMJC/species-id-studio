@@ -666,6 +666,23 @@ matters more to you.
 
 ---
 
+### Two group selectors, and what each one is for
+
+They are not the same control, which is worth knowing before hunting for an option:
+
+| selector | answers | backend |
+|---|---|---|
+| **group** on the main panel | "what kind of organism is it?" | iNaturalist taxon ids → GBIF taxon keys; drives `Fill from location` and `Place list (GBIF)` |
+| **Marine list…** | "which curated list should BioCLIP score against?" | `marine_lists/*.txt`, offline |
+
+Both now offer **sea snails, cones & cowries**. In the place-query one it is `Gastropoda`
+(the whole class, iNaturalist 47114 → GBIF `snails_slugs`) because neither service can
+restrict a taxon to marine-only — the tooltip says so, and at a dive site almost everything
+recorded there is marine anyway. In the offline one it is the curated 1,353-name
+`gastropods.txt`. *Charonia tritonis* (Triton's trumpet) is in both: it is a gastropod,
+`Littorinimorpha › Charoniidae`, and until the group-coverage fix it belonged to no group at
+all.
+
 ## Groups, and why every name needs one
 
 The group selector exists so a photo is scored against a plausible list rather than all
