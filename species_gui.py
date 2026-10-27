@@ -999,8 +999,15 @@ class MainWindow(QMainWindow):
         c.addSeparator()
         a = QAction("Save a copy for this photo now", self)
         a.triggered.connect(lambda: self.save_copy_current(force=True)); c.addAction(a)
+        a = QAction("Save copies for TICKED photos…", self)
+        a.triggered.connect(lambda: self.save_copies_for_batch(only_ticked=True)); c.addAction(a)
         a = QAction("Save copies for all batch results…", self)
-        a.triggered.connect(self.save_copies_for_batch); c.addAction(a)
+        a.triggered.connect(lambda: self.save_copies_for_batch()); c.addAction(a)
+        c.addSeparator()
+        a = QAction("Tick the plausible ones", self); a.triggered.connect(self.tick_probable)
+        c.addAction(a)
+        a = QAction("Tick all", self); a.triggered.connect(self.tick_all); c.addAction(a)
+        a = QAction("Untick all", self); a.triggered.connect(self.untick_all); c.addAction(a)
         a = QAction("Choose where copies go…", self)
         a.triggered.connect(self.choose_save_dir); c.addAction(a)
         m.addSeparator()
@@ -1358,21 +1365,36 @@ class MainWindow(QMainWindow):
 
         # --- batch results + export ---
         bw = QWidget(); bl = QVBoxLayout(bw)
-        self.btable = QTableWidget(0, 6)
+        # Column 0 is a per-row tick. In batch mode the interesting judgement is not
+        # "how confident is the app" but "is THIS one right" — a batch mixes correct and
+        # plainly wrong rows, and only the user can say which is which. Ticking records
+        # that decision; "save copies for ticked photos" then writes only those.
+        self.btable = QTableWidget(0, 7)
         self.btable.setHorizontalHeaderLabels(
-            ["Photo", "Taken", "GPS", "Most likely species", "Score", "From"])
+            ["✓", "Photo", "Taken", "GPS", "Most likely species", "Score", "From"])
         self.btable.verticalHeader().setVisible(False)
         self.btable.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.btable.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.btable.itemChanged.connect(self._on_batch_item_changed)
         self.btable.itemDoubleClicked.connect(self._open_batch_row)
         # Single-click selection previews the PHOTO in the big viewer on the left.
         # Batch rows show filenames like DSC_4821.NEF, which tell you nothing about
         # which animal you are looking at.
         self.btable.currentCellChanged.connect(self._on_batch_select)
         bh = self.btable.horizontalHeader()
-        bh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for c in (1, 2, 3, 4, 5):
+        bh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.btable.setColumnWidth(0, 30)
+        bh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for c in (2, 3, 4, 5, 6):
             bh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
         bl.addWidget(self.btable, 1)
+        self.tick_status = QLabel("")
+        self.tick_status.setStyleSheet("color:#6b7280;")
+        self.tick_status.setWordWrap(True)
+        self.tick_status.setMinimumWidth(0)
+        self.tick_status.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                       QSizePolicy.Policy.Preferred)
+        bl.addWidget(self.tick_status)
         br = QHBoxLayout()
         self.batch_btn = QPushButton("Batch folder…")
         self.batch_btn.clicked.connect(self.run_batch)
@@ -2312,16 +2334,33 @@ class MainWindow(QMainWindow):
         return save_copies.save_copy(src, species, target_dir=target,
                                      confidence=confidence, arm=arm)
 
-    def save_copies_for_batch(self) -> None:
-        """Save a copy for every batch result, skipping the ones that should be skipped."""
+    def save_copies_for_batch(self, only_ticked: bool = False) -> None:
+        """Save a copy for batch results — all of them, or only the ones you ticked.
+
+        Tick-only is the workflow that matters in practice: a batch contains photos you have
+        checked and photos that are plainly wrong, and a species-named file is a claim. Save
+        the ones you verified; leave the rest alone.
+        """
         if save_copies is None:
             QMessageBox.warning(self, APP_NAME, "save_copies.py is missing.")
             return
-        rows = [r for r in getattr(self, "results", []) if not r.get("error")]
-        if not rows:
+        allrows = [r for r in getattr(self, "results", []) if not r.get("error")]
+        if not allrows:
             QMessageBox.information(self, APP_NAME,
                                     "No batch results yet — run a batch folder first.")
             return
+        if only_ticked:
+            rows = [r for r in allrows if r.get("keep")]
+            if not rows:
+                QMessageBox.information(
+                    self, APP_NAME,
+                    "No photos are ticked.\n\n"
+                    "Tick the ✓ column for the photos whose identification is correct, then "
+                    "save — only those get a copy. “Tick the plausible ones” fills it in for "
+                    "you as a starting point.")
+                return
+        else:
+            rows = allrows
         saved = skipped = failed = 0
         reasons: dict[str, int] = {}
         for r in rows:
@@ -2343,7 +2382,9 @@ class MainWindow(QMainWindow):
                 failed += 1
                 reasons[str(rep.get("reason"))] = reasons.get(str(rep.get("reason")), 0) + 1
         where = str(self.cfg.get("save_copies_dir") or "a _identified folder beside each photo")
-        lines = [f"copies: {saved} saved, {skipped} skipped, {failed} failed",
+        scope = (f"ticked photos only ({len(allrows)} results in the batch)"
+                 if only_ticked else f"all {len(allrows)} results")
+        lines = [f"copies: {saved} saved, {skipped} skipped, {failed} failed  —  {scope}",
                  f"target: {where}",
                  "originals untouched (copies only)"]
         for why, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
@@ -2995,11 +3036,22 @@ class MainWindow(QMainWindow):
                 if rep.get("saved"):
                     r["copy_path"] = rep["dest"]
 
+        # column 0: the "I checked this one and it is right" tick. In batch the useful
+        # judgement is not the app's confidence but the user's — a run mixes correct and
+        # plainly wrong rows, and only they can say which is which.
+        tick = QTableWidgetItem("")
+        tick.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable |
+                      Qt.ItemFlag.ItemIsSelectable)
+        tick.setCheckState(Qt.CheckState.Checked if r.get("keep") else Qt.CheckState.Unchecked)
+        tick.setToolTip("Tick the photos whose identification is correct — "
+                        "“Save copies for ticked photos” writes only these.")
+        self.btable.setItem(i, 0, tick)
         for c, val in enumerate(cells):
             it = QTableWidgetItem(str(val))
-            if c == 0:
+            c += 1                       # column 0 is the tick
+            if c == 1:
                 it.setToolTip(r.get("photo", ""))
-            if c == 3:
+            if c == 4:
                 bits = []
                 if person and person.get("ranked"):
                     bits.append(f"your labels: {person['ranked'][0][0]} "
@@ -3010,11 +3062,61 @@ class MainWindow(QMainWindow):
                         f"{x['name']} ({x['score']*100:.1f}%)" for x in ranked[:5]))
                 it.setToolTip("\n".join(bits))
                 it.setForeground(QColor("#047857"))
-            if c == 5 and person:
+            if c == 6 and person:
                 it.setForeground(QColor("#1d4ed8"
                                         if person.get("confidence") == "confident"
                                         else "#b45309"))
             self.btable.setItem(i, c, it)
+
+    def _on_batch_item_changed(self, item) -> None:
+        """Record a tick into the result dict, so the decision outlives the widget."""
+        if item is None or item.column() != 0:
+            return
+        row = item.row()
+        if 0 <= row < len(self.results):
+            self.results[row]["keep"] = item.checkState() == Qt.CheckState.Checked
+        self._update_tick_status()
+
+    def _update_tick_status(self) -> None:
+        total = sum(1 for r in self.results if not r.get("error"))
+        ticked = sum(1 for r in self.results if r.get("keep"))
+        if hasattr(self, "tick_status"):
+            self.tick_status.setText(f"{ticked} of {total} ticked as correct"
+                                     if total else "")
+
+    def _set_all_ticks(self, on: bool, only_confident: bool = False) -> None:
+        """Tick or untick every row, optionally only the ones the app is not unsure about."""
+        self.btable.blockSignals(True)          # one refresh, not one per row
+        try:
+            for row, r in enumerate(self.results):
+                if r.get("error"):
+                    continue
+                want = on
+                if on and only_confident:
+                    conf = str(r.get("top_confidence") or "")
+                    want = conf == "confident" or (
+                        conf not in ("weak", "uncertain") and bool(r.get("top_species")))
+                r["keep"] = want
+                item = self.btable.item(row, 0)
+                if item is not None:
+                    item.setCheckState(Qt.CheckState.Checked if want
+                                       else Qt.CheckState.Unchecked)
+        finally:
+            self.btable.blockSignals(False)
+        self._update_tick_status()
+
+    def tick_all(self) -> None:
+        self._set_all_ticks(True)
+
+    def untick_all(self) -> None:
+        self._set_all_ticks(False)
+
+    def tick_probable(self) -> None:
+        """Tick what the app is not unsure about, as a starting point to review from."""
+        self._set_all_ticks(True, only_confident=True)
+        self.log.appendPlainText(
+            "ticked the identifications the app is not unsure about — review them, then "
+            "untick anything wrong.")
 
     def _on_batch_done(self, count: int, msg: str) -> None:
         # NOTE: do NOT clear self.batch here — this slot runs while the worker's

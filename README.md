@@ -621,6 +621,25 @@ when,copy,source,species,confidence,arm,bytes
 `arm` is `your labels` or `text`, and `confidence` is that arm's verdict — so a folder of renamed
 copies can always be audited back to its evidence.
 
+### In batch, tick the ones that are right
+
+A batch mixes photographs that are correctly identified with photographs that are plainly
+wrong, and only you can tell which is which. The batch table therefore starts with a **✓**
+column: tick the rows you have checked, and then use **Save copies for TICKED photos…**. A tick
+lives in the result row itself (`keep`), so it survives sorting, scrolling and export; a counter
+under the table says how many are ticked.
+
+To make the review quicker:
+
+- **Tick the plausible ones** ticks everything the app is not *unsure* about — a starting point,
+  not an answer. Untick whatever is wrong.
+- **Tick all** / **Untick all** for when the run went well or badly.
+- single-click a row to see its photo in the viewer, double-click to open it full size.
+
+**Save copies for all batch results…** still exists for the case where you trust the run. The
+ticked-only path is the one to use when you don't, because a species-named file is a claim and a
+wrong filename is worse than no filename.
+
 **Skip identifications the app is unsure about** is on by default and skips answers flagged
 `weak`. It deliberately does *not* skip a text-arm answer, because that arm has no confidence
 scale to threshold — but the log says so plainly when a text-arm answer named the file, since a

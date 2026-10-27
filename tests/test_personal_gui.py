@@ -195,12 +195,13 @@ win._on_batch_row({"photo": "/tmp/b.jpg", "name": "b.jpg",
                    "candidate_source": "list", "candidates": 880,
                    "ranked": text_ranked, "personal": person2, "seconds": 0.2,
                    "error": None})
+# column 0 is the per-row tick, so the data columns start at 1
 check("batch shows the label answer first",
-      win.btable.item(0, 3).text() == person2["top"], win.btable.item(0, 3).text())
+      win.btable.item(0, 4).text() == person2["top"], win.btable.item(0, 4).text())
 check("batch attributes it to your labels",
-      win.btable.item(0, 5).text().startswith("your labels"), win.btable.item(0, 5).text())
+      win.btable.item(0, 6).text().startswith("your labels"), win.btable.item(0, 6).text())
 check("batch score is a similarity, not a percentage",
-      win.btable.item(0, 4).text().startswith("sim "), win.btable.item(0, 4).text())
+      win.btable.item(0, 5).text().startswith("sim "), win.btable.item(0, 5).text())
 flat = species_gui.MainWindow._flatten(win.results[-1])
 check("csv keeps the label arm in its own columns",
       flat.get("your_labels_species") == person2["top"], flat.get("your_labels_species"))
@@ -316,6 +317,66 @@ check("the row records where its copy went", win.results[0].get("copy_path", "")
 check("the summary says originals are untouched",
       "originals untouched" in win.log.toPlainText(), win.log.toPlainText()[-200:])
 _shutil.rmtree(work)
+
+print("13. batch: tick only the correct photos, then save just those")
+from PyQt6.QtCore import Qt as _Qt
+work2 = pathlib.Path(tempfile.mkdtemp())
+def _photo(n):
+    q = work2 / n
+    q.write_bytes(b"\xff\xd8\xff\xe0" + n.encode() * 80)
+    return q
+
+win.results.clear()
+win.btable.setRowCount(0)
+for nm, sp in (("a.jpg", "Chromodoris annae"), ("b.jpg", "Thor amboinensis"),
+               ("c.jpg", "Nembrotha chamberlaini")):
+    win._on_batch_row({"photo": str(_photo(nm)), "name": nm, "meta": {},
+                       "candidate_source": "list", "candidates": 880,
+                       "ranked": [{"name": sp, "score": 0.4}], "seconds": 0.1,
+                       "error": None})
+
+check("a tick column exists", win.btable.columnCount() == 7
+      and win.btable.horizontalHeaderItem(0).text() == "\u2713",
+      [win.btable.horizontalHeaderItem(c).text() for c in range(win.btable.columnCount())])
+check("ticks start empty", win.tick_status.text() == "0 of 3 ticked as correct",
+      win.tick_status.text())
+
+# the user judges two of the three correct
+win.btable.item(0, 0).setCheckState(_Qt.CheckState.Checked)
+win.btable.item(1, 0).setCheckState(_Qt.CheckState.Checked)
+# an unticked row carries an explicit False, not a missing key: the checkbox writes its
+# state on creation, which is what makes "save ticked" a decision rather than a default
+check("ticking writes into the result rows",
+      [r.get("keep") for r in win.results] == [True, True, False],
+      [r.get("keep") for r in win.results])
+check("the counter follows", win.tick_status.text() == "2 of 3 ticked as correct",
+      win.tick_status.text())
+
+win.cfg["save_copies_dir"] = str(work2 / "ticked")
+win.cfg["save_copies_min_conf"] = "any"
+win.save_copies_for_batch(only_ticked=True)
+written = sorted(x.name for x in (work2 / "ticked").glob("*.jpg"))
+check("only the ticked photos get a copy", written == ["Chromodoris_annae.jpg",
+                                                      "Thor_amboinensis.jpg"], written)
+check("the unticked one was not written",
+      not (work2 / "ticked" / "Nembrotha_chamberlaini.jpg").exists())
+check("the summary says the scope",
+      "ticked photos only" in win.log.toPlainText(), win.log.toPlainText()[-300:])
+
+print("14. tick helpers, and refusing to save nothing")
+win.untick_all()
+check("untick all clears them", sum(1 for r in win.results if r.get("keep")) == 0)
+win.tick_all()
+check("tick all sets them", sum(1 for r in win.results if r.get("keep")) == 3)
+win.untick_all()
+saved_before = len(list((work2 / "ticked").glob("*.jpg")))
+msgs = []
+QMessageBox.information = staticmethod(lambda *a, **k: msgs.append(str(a[2]) if len(a) > 2 else ""))
+win.save_copies_for_batch(only_ticked=True)
+check("saving with nothing ticked says so",
+      any("No photos are ticked" in m for m in msgs), msgs)
+check("and writes nothing", len(list((work2 / "ticked").glob("*.jpg"))) == saved_before)
+_shutil.rmtree(work2)
 
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)
