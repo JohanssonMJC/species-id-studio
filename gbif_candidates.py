@@ -644,6 +644,27 @@ def fetch_candidates(*, lat: float | None = None, lon: float | None = None,
             bits.append(f"restricted to your {len(allowed):,} {unfiltered_group} names "
                         f"(dropped {before - len(names)} that are not in it)")
 
+    # An EMPTY result is the failure people misread as "GBIF is wrong". Ask once, without
+    # a taxon filter, whether anything at all is recorded at this point: if plenty is, the
+    # location is wrong or inland and the answer is the coordinates, not the data.
+    # Triggered only on empty, so it costs one request in exactly the case that needs it.
+    if not names and not unfiltered_group and (group or taxon_key is not None):
+        try:
+            p2 = {k: v for k, v in params.items() if k != "taxonKey"}
+            d2 = _get("occurrence/search", **p2)
+            other = (d2.get("facets") or [{}])[0].get("counts", []) or []
+            if other:
+                sample = ", ".join(strip_authority(c["name"]) for c in other[:3])
+                bits.append(
+                    f"NOTHING in this group, but {len(other):,} species of any kind are "
+                    f"recorded at this point ({sample}) — the location is almost "
+                    f"certainly wrong or inland, not the data")
+            else:
+                bits.append("nothing at all is recorded at this point — check the "
+                            "coordinates")
+        except Exception:
+            pass
+
     # total and capped are set by the query above: summed across keys when a group
     # needed several taxa, and capped if ANY of those queries hit the facet limit.
     info = (f"GBIF: {total:,} occurrence records | " + " | ".join(bits)

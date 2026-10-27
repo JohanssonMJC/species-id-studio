@@ -272,6 +272,28 @@ If in doubt, choose **`no group — I don't know`**: that applies no taxon filte
 returns everything recorded near you. A longer list costs a little ranking accuracy;
 a short wrong list costs the identification.
 
+#### When the answer is zero species, it says why
+
+An empty result is not "GBIF has nothing" — twice it has meant the place was wrong:
+**Anilao** resolved to a hamlet in Iloilo 1,000 km away (4 species instead of ~390), and
+**Bintang** resolves to *Pegunungan Bintang* in the **Papua highlands**, 2,000 km from the
+Lembeh Strait, where the answer really is zero. A third of iNaturalist's place database is
+not dive sites; dive areas are usually filed under their municipality (Mabini, Batangas;
+Bitung or Lembeh, not "Bintang").
+
+So when a group query returns nothing, the app asks once with no taxon filter and reports
+what *is* recorded at that point:
+
+```
+GBIF: 0 occurrence records | ~100 km around -4.707,140.434 | taxon Nudibranchia |
+NOTHING in this group, but 1,000 species of any kind are recorded at this point
+(Mellea ordinaria, Mellea ramifera, Meekiaria Munroe) — the location is almost certainly
+wrong or inland, not the data | 0 species
+```
+
+Moths are a clear enough signal. The correct point for the Lembeh Strait returns **419
+nudibranch species** within 100 km (Lembeh 1.453, 125.215 — or Bitung, 1.445, 125.148).
+
 ### `Marine list…` — your own curated list, offline
 
 **The name lists are not shipped here** — they are derived from *MarineLife Keywords

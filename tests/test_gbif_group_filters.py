@@ -83,5 +83,61 @@ check("a group name passes through", G.group_from_spec("bony_fishes") == "bony_f
 check("no group stays unfiltered", G.group_from_spec({}) is None)
 check("unknown spec stays unfiltered", G.group_from_spec({"taxa": [999999999]}) is None)
 
+print("6. an empty result says WHY it is empty instead of looking like missing data")
+# The wrong-place failure, twice seen: "Bintang" resolves to the Papua highlands, where
+# there are no nudibranchs — but 1,000 species of any kind ARE recorded, which is the
+# diagnostic. Stub the API so this runs offline.
+real_get = G._get
+calls = []
+
+
+def fake_get(path, **params):
+    calls.append((path, dict(params)))
+    if path == "species/match":
+        return {"matchType": "EXACT", "rank": "ORDER", "usageKey": 980,
+                "scientificName": "Nudibranchia"}
+    if path == "occurrence/search":
+        if "taxonKey" in params:
+            return {"count": 0, "facets": [{"field": "SCIENTIFIC_NAME", "counts": []}]}
+        return {"count": 12345,
+                "facets": [{"field": "SCIENTIFIC_NAME", "counts": [
+                    {"name": "Mellea ordinaria Linnaeus, 1758", "count": 900},
+                    {"name": "Meekiaria Munroe, 1974", "count": 400}]}]}
+    return {}
+
+
+G._get = fake_get
+try:
+    names, info = G.fetch_candidates(lat=-4.70725, lon=140.43362, radius_km=100,
+                                     group="nudibranchs")
+finally:
+    G._get = real_get
+check("no names returned", names == [], names)
+check("the info names the emptiness", "NOTHING in this group" in info, info[:200])
+check("it says how much IS recorded", "2 species of any kind" in info, info[:260])
+check("it quotes what is there, so land is obvious",
+      "Mellea ordinaria" in info and "Meekiaria" in info, info[:260])
+check("it blames the location, not the data", "wrong or inland" in info, info[:260])
+check("it asked the unfiltered question exactly once",
+      sum(1 for p, q in calls if p == "occurrence/search" and "taxonKey" not in q) == 1,
+      [p for p, _ in calls])
+
+# and when truly nothing is recorded there at all
+def fake_get_empty(path, **params):
+    if path == "species/match":
+        return {"matchType": "EXACT", "rank": "ORDER", "usageKey": 980,
+                "scientificName": "Nudibranchia"}
+    return {"count": 0, "facets": [{"field": "SCIENTIFIC_NAME", "counts": []}]}
+
+
+G._get = fake_get_empty
+try:
+    names, info = G.fetch_candidates(lat=0.0, lon=-160.0, radius_km=50,
+                                     group="nudibranchs")
+finally:
+    G._get = real_get
+check("an empty ocean point says nothing is recorded there",
+      "nothing at all is recorded" in info, info[:220])
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)
