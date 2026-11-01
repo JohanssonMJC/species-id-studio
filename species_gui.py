@@ -1092,6 +1092,8 @@ class MainWindow(QMainWindow):
         # squeezed this box to zero pixels and the list simply vanished. Four rows is the
         # least that still reads as a list you can scroll.
         self.cand_edit.setMinimumHeight(88)
+        self.cand_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.cand_edit.customContextMenuRequested.connect(self._cand_menu)
         self.cand_edit.setPlaceholderText(
             "No species loaded yet. Pick a source:\n"
             "  • Marine list…  — your dive species, narrowed to a group (offline)\n"
@@ -1141,6 +1143,20 @@ class MainWindow(QMainWindow):
             "taken.\n\n"
             "Needs the internet; no account or API key.")
         r2.addWidget(self.gbif_btn)
+        # Clear, with a restore path. Wiping 880 names — or a list you spent a minute
+        # pasting — is easy to do by accident, so the button keeps the cleared text in
+        # memory and the box's own context menu offers it back. No confirmation dialog:
+        # a modal on every clear would be worse than the undo it stands in for.
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setToolTip(
+            "Empty the candidate list and forget its group/source, so the next load starts "
+            "from nothing.\n\n"
+            "Useful after an 'add to list' merge, or between photos from different "
+            "habitats. The cleared list stays in memory: right-click the box → "
+            "“Restore cleared list”.")
+        self.clear_btn.setFixedWidth(64)
+        self.clear_btn.clicked.connect(self.clear_candidates)
+        r2.addWidget(self.clear_btn)
         cl.addLayout(r2)
         # Second row for the online switch and the live count. Keeping them in r2 made
         # that row's minimum width the SUM of six widgets, which is what pushed the
@@ -1721,6 +1737,101 @@ class MainWindow(QMainWindow):
         place = f" {self.place_label}" if getattr(self, "place_label", "") else ""
         self.where_lbl.setText(f"@ {lat:.3f}, {lon:.3f}{place} ±{self.radius.value()} km")
         self.where_lbl.setStyleSheet("color:#6b7280;")
+
+    def clear_candidates(self, confirm_empty: bool = False) -> None:
+        """Empty the candidate list, keeping one copy so it can be restored.
+
+        Nothing else is touched: the photo, the ranking already on screen and the fitted
+        classifier all survive. This clears only what the next identification will score
+        against, which is the point — after an "add to list" merge the box can hold a mix
+        of habitats, and the count then describes a pool nobody chose.
+        """
+        text = self.cand_edit.toPlainText()
+        if not text.strip():
+            self.statusBar().showMessage("The candidate list is already empty", 8000)
+            return
+        self._cleared = {"text": text,
+                         "group": str(getattr(self, "cand_group", "") or ""),
+                         "source": str(getattr(self, "cand_source", "") or ""),
+                         "n": len(self.candidates())}
+        self.cand_edit.blockSignals(True)        # one count update, not one per line
+        try:
+            self.cand_edit.setPlainText("")
+        finally:
+            self.cand_edit.blockSignals(False)
+        self.cand_group = ""
+        self.cand_source = ""
+        self._update_cand_count()
+        self.log.appendPlainText(
+            f"cleared {self._cleared['n']:,} candidate names — right-click the box to "
+            f"restore them")
+        self.statusBar().showMessage(
+            f"Candidate list cleared ({self._cleared['n']:,} names kept for undo)", 15000)
+
+    def restore_candidates(self) -> None:
+        """Put back the list that Clear removed, with its group and source."""
+        saved = getattr(self, "_cleared", None)
+        if not saved:
+            self.statusBar().showMessage("Nothing to restore", 8000)
+            return
+        self.cand_edit.blockSignals(True)
+        try:
+            self.cand_edit.setPlainText(saved["text"])
+        finally:
+            self.cand_edit.blockSignals(False)
+        self.cand_group = saved["group"]
+        self.cand_source = saved["source"]
+        self._update_cand_count()
+        self._cleared = None
+        self.log.appendPlainText(f"restored {saved['n']:,} candidate names")
+        self.statusBar().showMessage(f"Restored {saved['n']:,} candidate names", 15000)
+
+    def _cand_menu(self, pos) -> None:
+        """Right-click on the candidate box: clear, restore, copy, sort, dedupe."""
+        m = QMenu(self)
+        a = m.addAction("Clear the list")
+        a.setEnabled(bool(self.cand_edit.toPlainText().strip()))
+        a.triggered.connect(self.clear_candidates)
+        saved = getattr(self, "_cleared", None)
+        a = m.addAction(f"Restore cleared list  ({saved['n']:,} names)"
+                        if saved else "Restore cleared list")
+        a.setEnabled(bool(saved))
+        a.triggered.connect(self.restore_candidates)
+        m.addSeparator()
+        a = m.addAction("Copy all names")
+        a.triggered.connect(lambda: QApplication.clipboard().setText(
+            self.cand_edit.toPlainText()))
+        a = m.addAction("Sort alphabetically")
+        a.triggered.connect(self.sort_candidates)
+        a = m.addAction("Remove duplicates")
+        a.triggered.connect(self.dedupe_candidates)
+        m.exec(self.cand_edit.mapToGlobal(pos))
+
+    def sort_candidates(self) -> None:
+        # Case-insensitive de-duplication, keeping the first spelling met: a plain
+        # set() left both "Alpha beta" and "alpha beta", which for a classifier is the
+        # same name encoded twice — wasted encode time and a duplicated row in the table.
+        seen, names = set(), []
+        for n in self.candidates():
+            k = n.strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                names.append(n.strip())
+        names.sort(key=str.lower)
+        self.cand_edit.setPlainText("\n".join(names))
+        self._update_cand_count()
+        self.log.appendPlainText(f"sorted and de-duplicated: {len(names):,} names")
+
+    def dedupe_candidates(self) -> None:
+        names, seen = [], set()
+        for n in self.candidates():
+            k = n.strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                names.append(n.strip())
+        self.cand_edit.setPlainText("\n".join(names))
+        self._update_cand_count()
+        self.log.appendPlainText(f"duplicates removed: {len(names):,} names left")
 
     def _count_row(self):
         """The candidate-count line, on its own full-width row under the list box.

@@ -136,5 +136,63 @@ win._update_cand_count()
 check("plain count, no dangling separator",
       win.cand_count.text() == "2 candidates", win.cand_count.text())
 
+print("10. clearing the list, and getting it back")
+win.place_label = "Bitung, ID"
+win.radius.setValue(100)
+win._on_gbif([f"Nembrotha sp{i}" for i in range(828)],
+             "828 species at Bitung, 100 km")
+app.processEvents()
+check("a clear button exists", win.clear_btn.text() == "Clear")
+check("it is fixed width so it cannot grow the row", win.clear_btn.width() == 64,
+      win.clear_btn.width())
+before_min = win.minimumSizeHint().width()
+
+win.clear_candidates()
+app.processEvents()
+check("the box is empty", win.cand_edit.toPlainText() == "", win.cand_edit.toPlainText()[:60])
+check("the count reads zero", win.cand_count.text() == "0 candidates", win.cand_count.text())
+check("the group and source are forgotten",
+      win.cand_group == "" and win.cand_source == "",
+      (win.cand_group, win.cand_source))
+check("the cleared names are kept for undo", win._cleared["n"] == 828, win._cleared["n"])
+check("clearing did not widen the window",
+      win.minimumSizeHint().width() == before_min, win.minimumSizeHint().width())
+
+win.restore_candidates()
+app.processEvents()
+check("restore brings every name back",
+      win.cand_edit.toPlainText().count("\n") + 1 == 828,
+      win.cand_edit.toPlainText().count("\n") + 1)
+check("restore brings the source back", "GBIF" in win.cand_count.text(), win.cand_count.text())
+check("the undo slot is consumed", win._cleared is None)
+
+win.clear_candidates()          # empty it
+win.clear_candidates()          # and press again
+check("clearing an empty list says so instead of failing",
+      "already empty" in win.statusBar().currentMessage(),
+      win.statusBar().currentMessage())
+
+print("11. sort and de-duplicate, ignoring case")
+win.cand_edit.setPlainText("\n".join(["gamma delta", "Alpha beta", "alpha beta", "",
+                                      "Alpha beta", "Zeta omega"]))
+win._update_cand_count()
+win.sort_candidates()
+check("blank lines and case duplicates removed",
+      win.cand_edit.toPlainText().split("\n") == ["Alpha beta", "gamma delta", "Zeta omega"],
+      win.cand_edit.toPlainText().split("\n"))
+check("count follows", win.cand_count.text().startswith("3 candidate"),
+      win.cand_count.text())
+
+print("12. clearing keeps the identification on screen")
+win.image_path = "/tmp/x.jpg"
+win._on_bio({"ranked": [{"name": "Doto rosea", "score": 0.4}],
+             "candidates_scored": 3, "seconds": 0.1})
+rows_before = win.table.rowCount()
+win.clear_candidates()
+app.processEvents()
+check("the result table is untouched", win.table.rowCount() == rows_before,
+      (rows_before, win.table.rowCount()))
+check("so is the photo", win.image_path == "/tmp/x.jpg", win.image_path)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

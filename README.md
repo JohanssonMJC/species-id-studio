@@ -239,8 +239,17 @@ takes `--depth MIN,MAX` with that warning in its help text. The GUI never passes
 - **No account or API key required.**
 - **Loading replaces the list** (there is an `add to list` checkbox if you want to
   merge instead).
-- The count label names the taxon, e.g. `393 candidates — Nudibranchia`, so you can
-  see the filter is applied.
+- The count label names the taxon and the source, e.g.
+  `828 candidates — Nudibranchia · GBIF, 100 km`, so you can see both that the filter was
+  applied and what the list claims to be. A count with no source is a number without a
+  meaning: it matters whether "828" is everything recorded within 100 km or just that group's
+  share of it.
+- **Clear** empties the list and forgets its group and source, so the next load starts from
+  nothing — the way out of an `add to list` merge that left two habitats in one pool. The
+  cleared names are kept in memory: right-click the box for **Restore cleared list**, plus
+  **Copy all names**, **Sort alphabetically** and **Remove duplicates**. There is no
+  confirmation dialog, because a modal on every clear would be worse than the undo it stands
+  in for. Clearing touches nothing else: the photo and the ranking on screen stay put.
 
 #### Groups are deliberately broad
 
