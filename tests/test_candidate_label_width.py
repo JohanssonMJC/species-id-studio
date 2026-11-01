@@ -74,8 +74,11 @@ check("window minimum width still unchanged",
 
 print("4. the label wraps and yields its width")
 check("word wrap on", win.cand_count.wordWrap())
-check("horizontal policy Ignored",
-      win.cand_count.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored,
+# Ignored was the original choice and it was wrong: an Ignored label claims zero width, so
+# with a stretch in the row the count rendered at 0 px — in the layout, invisible on screen.
+# Preferred keeps the hint when there is room and shrinks (word wrapped) when there is not.
+check("horizontal policy is Preferred, not Ignored",
+      win.cand_count.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred,
       win.cand_count.sizePolicy().horizontalPolicy())
 check("minimum width zero", win.cand_count.minimumWidth() == 0)
 
@@ -85,6 +88,53 @@ win.cand_group = ""
 win._update_cand_count()
 check("empty group adds no suffix", "—" not in win.cand_count.text(),
       win.cand_count.text())
+
+print("6. the count is actually VISIBLE, and says what the list is")
+win.resize(1400, 900)
+win.show()
+app.processEvents()
+win.place_label = "Bitung, ID"
+win.radius.setValue(100)
+# select the group explicitly: the ambient config carries whatever was last used, and a test
+# that depends on it tests the config rather than the label
+for i in range(win.group.count()):
+    if "nudibranch" in win.group.itemText(i).lower():
+        win.group.setCurrentIndex(i)
+        break
+win._on_gbif([f"Nembrotha sp{i}" for i in range(828)],
+             "828 species at Bitung, 100 km")
+app.processEvents()
+txt = win.cand_count.text()
+check("the count is in the text", "828 candidates" in txt, txt)
+check("the group is named", "Nudibranchia" in txt, txt)
+check("the source is named", "GBIF" in txt, txt)
+check("it rendered with a real width", win.cand_count.geometry().width() > 40,
+      win.cand_count.geometry().width())
+check("on a single line, not wrapped mid-phrase",
+      win.cand_count.geometry().height() <= 24, win.cand_count.geometry().height())
+
+print("7. no label anywhere is present but zero-width")
+from PyQt6.QtWidgets import QLabel as _QL
+invisible = [l.text()[:40] for l in win.findChildren(_QL)
+             if l.text() and l.isVisible() and l.geometry().width() == 0]
+check("every visible label with text has width", not invisible, invisible)
+
+print("8. the candidate box cannot be squeezed away")
+check("the text box has a minimum height", win.cand_edit.minimumHeight() >= 80,
+      win.cand_edit.minimumHeight())
+check("and gets a laid-out height", win.cand_edit.geometry().height() >= 80,
+      win.cand_edit.geometry().height())
+check("the count row sits below the box, not on top of it",
+      win.cand_count.geometry().y() >= win.cand_edit.geometry().bottom() - 2,
+      (win.cand_edit.geometry().getRect(), win.cand_count.geometry().getRect()))
+
+print("9. a fill with no source recorded still reads sensibly")
+win.cand_source = ""
+win.cand_group = ""                     # a hand-typed list has no group provenance
+win.cand_edit.setPlainText("\n".join(["Alpha beta", "Gamma delta"]))
+win._update_cand_count()
+check("plain count, no dangling separator",
+      win.cand_count.text() == "2 candidates", win.cand_count.text())
 
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

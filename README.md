@@ -621,6 +621,27 @@ when,copy,source,species,confidence,arm,bytes
 `arm` is `your labels` or `text`, and `confidence` is that arm's verdict — so a folder of renamed
 copies can always be audited back to its evidence.
 
+### The candidate count is a line you can actually see
+
+Under the candidate list, on its own full-width line, bold:
+
+```
+880 candidates — Nudibranchia  ·  GBIF, 100 km
+```
+
+Three things, because the number alone cannot tell you whether a list is representative:
+
+- **how many** names BioCLIP will score against (the box is counted the way the classifier
+  counts it — blank lines ignored, so `REPLACE`/merge modes cannot inflate it);
+- **what taxon** they are, when a group narrowed them;
+- **where they came from**, e.g. `GBIF, 100 km` for a regional list, or nothing for a list you
+  typed or loaded from a file.
+
+The useful judgement: a few hundred names recorded within 100 km of the dive site is a
+representative list; the same few hundred pulled from a worldwide facet is not. If the count
+looks far too small for the place, suspect the **search area** before the group — a place name
+can resolve to a same-named town on another island, which is exactly what happened with Anilao.
+
 ### In batch, tick the ones that are right
 
 A batch mixes photographs that are correctly identified with photographs that are plainly

@@ -1088,13 +1088,39 @@ class MainWindow(QMainWindow):
         # seeded a hardcoded European starter list here, so a dive photo was scored
         # against ten European garden insects and ten European birds without the
         # user ever choosing that. An empty box with a clear hint is honest.
+        # A minimum height, because the left column is tight: adding the count row below it
+        # squeezed this box to zero pixels and the list simply vanished. Four rows is the
+        # least that still reads as a list you can scroll.
+        self.cand_edit.setMinimumHeight(88)
         self.cand_edit.setPlaceholderText(
             "No species loaded yet. Pick a source:\n"
             "  • Marine list…  — your dive species, narrowed to a group (offline)\n"
             "  • Fill from location — what is recorded near a place + group + month\n"
             "  • Load from file… — your own list, one scientific name per line\n"
             "Or just type names here, one per line.")
+        # How many candidates are loaded, shown BEFORE running BioCLIP: the classifier
+        # scores against exactly this many names, and the count is the cheapest way to
+        # notice that a list is empty, tiny, or unexpectedly huge.
+        self.cand_count = QLabel()
+        # This label must never widen the window — a long group description (a 24-order
+        # union rendered in full was 695 characters) once pushed the window past the
+        # screen edge. Two guards, and the reason both are needed:
+        #   * the TEXT is capped (60 chars for the group part, in _update_cand_count);
+        #   * the POLICY is Preferred, not Ignored. Ignored looked safe but made the
+        #     label claim zero width, and the stretch that follows took the rest, so the
+        #     count rendered at 0 px — present in the layout, invisible on screen. A
+        #     Preferred label keeps its sizeHint when there is room and shrinks instead
+        #     of forcing the row wider when there is not.
+        self.cand_count.setWordWrap(True)
+        self.cand_count.setMinimumWidth(0)
+        self.cand_count.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                      QSizePolicy.Policy.Preferred)
+        self.cand_count.setToolTip(
+            "Names the classifier will score against. More names encode slower and "
+            "blunt the top pick's confidence, so a regional or group-narrowed list "
+            "usually beats a global one.")
         cl.addWidget(self.cand_edit)
+        cl.addLayout(self._count_row())
         r2 = QHBoxLayout()
         b = QPushButton("Load from file…"); b.clicked.connect(self.load_candidates_file)
         r2.addWidget(b)
@@ -1116,7 +1142,6 @@ class MainWindow(QMainWindow):
             "Needs the internet; no account or API key.")
         r2.addWidget(self.gbif_btn)
         cl.addLayout(r2)
-
         # Second row for the online switch and the live count. Keeping them in r2 made
         # that row's minimum width the SUM of six widgets, which is what pushed the
         # window past the screen edge.
@@ -1146,38 +1171,20 @@ class MainWindow(QMainWindow):
         # permanently makes a wrong location visible BEFORE the query runs.
         self.where_lbl = QLabel()
         self.where_lbl.setStyleSheet("color:#6b7280;")
-        # Ignored width policy: the text must never set the layout's minimum width.
-        # A QLabel sized to its content re-inflated the window floor the moment the
-        # coordinates got long (1206 -> beyond a 1260 px screen), undoing the layout
-        # work — status text is exactly the kind of thing that should shrink, not push.
-        self.where_lbl.setSizePolicy(QSizePolicy.Policy.Ignored,
-                                     QSizePolicy.Policy.Preferred)
+        # Width policy: Preferred, NOT Ignored. Ignored was tried first and claimed zero
+        # width, so with a stretch in the row this label — the only thing showing WHICH
+        # coordinates a lookup will use — rendered at 0 px, present but invisible. Preferred
+        # keeps its hint when there is room and shrinks (word wrapped) when there is not, so
+        # it can neither disappear nor inflate the window floor.
         self.where_lbl.setMinimumWidth(0)
+        self.where_lbl.setWordWrap(True)
+        self.where_lbl.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                     QSizePolicy.Policy.Preferred)
         self.where_lbl.setToolTip(
             "Where the next regional lookup will search. The coordinates are the ground "
             "truth — a place NAME can match a same-named town far away (\"Anilao\" "
             "matches a town in Iloilo, ~1,000 km from the Batangas dive area).")
         r2b.addWidget(self.where_lbl)
-        r2b.addStretch(1)
-        # How many candidates are loaded, shown BEFORE running BioCLIP: the classifier
-        # scores against exactly this many names, and the count is the cheapest way to
-        # notice that a list is empty, tiny, or unexpectedly huge.
-        self.cand_count = QLabel()
-        self.cand_count.setStyleSheet("font-weight:600;")
-        # This label must NEVER be able to widen the window. A long group description
-        # (a 24-order union rendered in full is 695 characters) inflated the row, the
-        # left pane and the whole window past the screen edge. Wrapping plus an Ignored
-        # horizontal policy means the layout gives it whatever width is available and it
-        # wraps instead of demanding more; the full text stays in the tooltip.
-        self.cand_count.setWordWrap(True)
-        self.cand_count.setMinimumWidth(0)
-        self.cand_count.setSizePolicy(QSizePolicy.Policy.Ignored,
-                                      QSizePolicy.Policy.Preferred)
-        self.cand_count.setToolTip(
-            "Names the classifier will score against. More names encode slower and "
-            "blunt the top pick's confidence, so a regional or group-narrowed list "
-            "usually beats a global one.")
-        r2b.addWidget(self.cand_count)
         cl.addLayout(r2b)
         # Gated on the online switch: GBIF is a network service like iNaturalist.
         # The marine list and Load from file stay available offline.
@@ -1297,7 +1304,7 @@ class MainWindow(QMainWindow):
         self.reason_for_lbl.setStyleSheet("color:#6b7280;")
         self.reason_for_lbl.setWordWrap(True)
         self.reason_for_lbl.setMinimumWidth(0)
-        self.reason_for_lbl.setSizePolicy(QSizePolicy.Policy.Ignored,
+        self.reason_for_lbl.setSizePolicy(QSizePolicy.Policy.Preferred,
                                           QSizePolicy.Policy.Preferred)
         self.ask_btn.clicked.connect(self.ask_vision)
         r.addWidget(self.ask_btn, 1)
@@ -1392,7 +1399,7 @@ class MainWindow(QMainWindow):
         self.tick_status.setStyleSheet("color:#6b7280;")
         self.tick_status.setWordWrap(True)
         self.tick_status.setMinimumWidth(0)
-        self.tick_status.setSizePolicy(QSizePolicy.Policy.Ignored,
+        self.tick_status.setSizePolicy(QSizePolicy.Policy.Preferred,
                                        QSizePolicy.Policy.Preferred)
         bl.addWidget(self.tick_status)
         br = QHBoxLayout()
@@ -1715,6 +1722,20 @@ class MainWindow(QMainWindow):
         self.where_lbl.setText(f"@ {lat:.3f}, {lon:.3f}{place} ±{self.radius.value()} km")
         self.where_lbl.setStyleSheet("color:#6b7280;")
 
+    def _count_row(self):
+        """The candidate-count line, on its own full-width row under the list box.
+
+        Own row, not a share of the crowded online row: squeezed in there it wrapped
+        mid-phrase ("828 candidates —" / "Nudibranchia"), and it is the one line you check
+        before trusting a run.
+        """
+        r = QHBoxLayout()
+        r.setContentsMargins(0, 0, 0, 0)
+        # No trailing stretch: the label is alone on the row, and a stretch took the width
+        # that word wrap then needed, breaking "…· GBIF, 100 km" onto a second line.
+        r.addWidget(self.cand_count)
+        return r
+
     def _update_cand_count(self) -> None:
         """Show how many candidate names are loaded, before anything is scored.
 
@@ -1733,6 +1754,11 @@ class MainWindow(QMainWindow):
         if len(grp) > 60:
             grp = grp[:57].rstrip() + "…"
         suffix = f" — {grp}" if grp else ""
+        src = str(getattr(self, "cand_source", "") or "")
+        if len(src) > 70:
+            src = src[:67].rstrip() + "…"
+        if src:
+            suffix += f"  ·  {src}"
         if n == 0:
             self.cand_count.setText("0 candidates")
             self.cand_count.setStyleSheet("color:#b91c1c; font-weight:600;")
@@ -1882,6 +1908,11 @@ class MainWindow(QMainWindow):
         monotonically (541 nudibranchs -> 1,211 mixed) while the label claimed the new
         group — which is what made it look broken.
         """
+        # Provenance for the count line: WHAT list this is, recorded at the one place every
+        # source funnels through. "828 candidates" alone cannot tell you whether that is
+        # every species recorded within 100 km or only this group's, and that difference is
+        # exactly what makes a list representative or not.
+        self.cand_source = source or ""
         if replace:
             self.cand_edit.setPlainText("\n".join(names))
             self._update_cand_count()
@@ -1955,6 +1986,28 @@ class MainWindow(QMainWindow):
         replace = not getattr(self, "add_to_list_chk", None) or \
             not self.add_to_list_chk.isChecked()
         kept = self._set_candidates(names, replace=replace, source="GBIF")
+        # The count is only useful for judging representativeness if it says WHAT list it
+        # is: "828 candidates" could be every species ever recorded in 100 km, or the
+        # nudibranchs of that area. Put the group on the label.
+        # Deliberately no place name here: the coordinates line directly beneath already
+        # names it, and repeating it pushed the count onto a second line.
+        self.cand_source = (f"GBIF, {self.radius.value() if hasattr(self, 'radius') else '?'}"
+                            f" km")
+        grp = (self.group.currentData() or {}).get("label") if hasattr(self, "group") else ""
+        if not grp:
+            grp = str(getattr(self, "cand_group", "") or "")
+        if grp:
+            self.cand_group = grp
+            self._update_cand_count()
+        n_loaded = len(self.candidates())
+        self.cand_count.setToolTip(
+            f"{n_loaded:,} names are loaded.\n\n"
+            "Source: GBIF occurrences recorded around the coordinates shown above, "
+            "filtered to the selected group.\n\n"
+            "Fewer names encode faster and keep the top pick's confidence meaningful; a "
+            "very long list costs encoding time without adding per-photo accuracy. If the "
+            "count looks far too small for the place, suspect the SEARCH AREA rather than "
+            "the group — a place name can resolve to a same-named town on another island.")
         hint = ""
         if len(names) < 8:
             hint = ("  — only a few species came back. That usually means the SEARCH "
