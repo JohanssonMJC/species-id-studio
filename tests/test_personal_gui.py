@@ -434,5 +434,48 @@ offenders = [f"line {n} in {_enclosing(n)}(): {line.strip()}"
              if _pat.search(line) and _enclosing(n) != "__init__"]
 check("only _reap() clears worker references", not offenders, offenders)
 
+print("16. a label answer for a species the list does not contain is SHOWN, not discarded")
+# The report that produced this: "no matter how many photos of the same species I teach it
+# gets it wrong even if it's the same photo I've just taught." Cause: the label answer was
+# dropped whenever its species was absent from the loaded candidate list, so the app answered
+# from the text arm alone — which cannot name a species that is not in the list.
+win.image_path = "/tmp/x.jpg"
+win._on_bio({"ranked": [{"name": "Doto rosea", "score": 0.31},
+                        {"name": "Doto rosacea", "score": 0.09}],
+             "personal": {"ranked": [("Phyllodesmium poindimiei", 0.97, 0.24)],
+                          "top": "Phyllodesmium poindimiei", "score": 0.97,
+                          "margin": 0.24, "confidence": "confident"},
+             "scope": {"Doto rosea", "Doto rosacea"},
+             "candidates_scored": 2, "seconds": 0.1})
+app.processEvents()
+names = [win.table.item(r, 1).text() for r in range(win.table.rowCount())]
+check("the taught species appears at all", "Phyllodesmium poindimiei" in names, names)
+check("the list's own top pick still leads", names[0] == "Doto rosea", names)
+check("no text row was displaced", {"Doto rosea", "Doto rosacea"} <= set(names), names)
+row = names.index("Phyllodesmium poindimiei")
+src = win.table.item(row, 3)
+check("the From cell says it is not in the list", "NOT in list" in src.text(), src.text())
+check("it is amber: the doubt is the list, not the classifier",
+      src.foreground().color().name() == "#b45309", src.foreground().color().name())
+check("the tooltip says what to do", "Add to the candidate list" in src.toolTip(),
+      src.toolTip()[:60])
+check("the score is a similarity, not a percentage",
+      win.table.item(row, 2).text().startswith("sim "), win.table.item(row, 2).text())
+check("the log blames the list, not the model",
+      "NOT in the" in win.log.toPlainText(), win.log.toPlainText()[-200:])
+
+print("17. and it can be added to the list without typing")
+win.cand_edit.setPlainText("Doto rosea\nDoto rosacea")
+win._update_cand_count()
+win.add_to_candidates("Phyllodesmium poindimiei")
+check("the species is appended",
+      win.candidates()[-1] == "Phyllodesmium poindimiei", win.candidates())
+check("the count follows", len(win.candidates()) == 3, len(win.candidates()))
+win.add_to_candidates("Phyllodesmium poindimiei")
+check("adding it twice is refused politely",
+      "already in the list" in win.statusBar().currentMessage(),
+      win.statusBar().currentMessage())
+check("the list still has three names", len(win.candidates()) == 3, len(win.candidates()))
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

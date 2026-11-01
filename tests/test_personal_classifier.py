@@ -164,12 +164,26 @@ scope = {"Chaetodon kleinii", "Amphiprion ocellaris"}
 outside = {"ranked": [("Nembrotha chamberlaini", 0.91, 0.19)], "top": "Nembrotha chamberlaini",
            "score": 0.91, "margin": 0.19, "confidence": "confident"}
 merged = pc.merge_with_text(outside, fish, top_k=5, scope=scope)
-check("out-of-scope label answer is dropped", "Nembrotha chamberlaini" not in
+# The first rule was "drop it", and dropping was wrong: with a cleared or narrow candidate
+# list the one arm that could be right was discarded, so the app answered from the text arm
+# alone and got it wrong even for a photo that had just been taught. Keep the row, mark it,
+# and put it below the list's own answer so it still cannot silently displace that answer.
+check("out-of-scope label answer is KEPT", "Nembrotha chamberlaini" in
       [m["name"] for m in merged], merged)
-check("text ranking leads instead", merged[0]["name"] == "Chaetodon kleinii", merged[0])
-check("nothing is lost from the text arm", len(merged) == 2, len(merged))
-check("the log explains it", "not in the selected group" in pc.scope_note(outside, scope),
+check("but the group's own answer still leads",
+      merged[0]["name"] == "Chaetodon kleinii", merged[0])
+check("the kept row says why it is there",
+      merged[1]["source"] == "your labels (not in list)", merged[1])
+check("the row is flagged for the UI", merged[1].get("out_of_scope") is True, merged[1])
+check("nothing is lost from the text arm",
+      {"Chaetodon kleinii", "Amphiprion ocellaris"} <= {m["name"] for m in merged}, merged)
+check("the log says the LIST is missing it, not the classifier",
+      "NOT in the" in pc.scope_note(outside, scope)
+      and "Add to the candidate list" in pc.scope_note(outside, scope),
       pc.scope_note(outside, scope))
+check("a label answer with no list at all still shows",
+      [m["name"] for m in pc.merge_with_text(outside, [], top_k=5, scope=set())]
+      == ["Nembrotha chamberlaini"])
 check("no note when the answer is in scope",
       pc.scope_note({"ranked": [("Chaetodon kleinii", 0.9, 0.2)], "confidence": "confident"},
                     scope) == "")

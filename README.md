@@ -675,6 +675,29 @@ wrong filename is worse than no filename.
 scale to threshold — but the log says so plainly when a text-arm answer named the file, since a
 filename is a claim and "the text ranking's top pick" is a weaker one than "one of my labels".
 
+### When your labels name a species the list does not contain
+
+The candidate list is the question being asked, so a label answer for something outside it must
+not silently take first place — that is how a nudibranch ended up at rank 1 under "reef & bony
+fishes". But discarding it was worse. With a narrow or freshly-cleared list, the one arm that
+could be right was being thrown away, and the app then answered from the text arm alone, which
+*cannot* name a species that is not in the list — so it got photos wrong even ones it had just
+been taught.
+
+Now such an answer is **kept, marked and explained**:
+
+- it is shown directly below the list's own top pick, so it never displaces what you asked for;
+- its `From` cell reads `your labels · NOT in list` in amber — the doubt is about the **list**,
+  not about how sure the classifier is;
+- the log says so in words: *"your labels recognised “Phyllodesmium poindimiei” (confident,
+  margin 0.240) but that species is NOT in the 2 candidates you loaded — so the list is missing
+  the answer, not the classifier."*;
+- right-click that row → **Add "…" to the candidate list** appends it, no typing, and identify
+  again.
+
+That last step is usually the whole fix: the species you taught is real evidence, and a list
+that omits it is the thing that needs correcting.
+
 ### It flags, it does not refuse
 
 A rejection threshold cannot be made both safe and useful here. Measured with 24 verified

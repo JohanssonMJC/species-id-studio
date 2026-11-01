@@ -1738,6 +1738,24 @@ class MainWindow(QMainWindow):
         self.where_lbl.setText(f"@ {lat:.3f}, {lon:.3f}{place} ±{self.radius.value()} km")
         self.where_lbl.setStyleSheet("color:#6b7280;")
 
+    def add_to_candidates(self, name: str) -> None:
+        """Append one species to the candidate list — no typing, no lost list."""
+        name = (name or "").strip()
+        if not name:
+            return
+        have = {n.strip().lower() for n in self.candidates()}
+        if name.lower() in have:
+            self.statusBar().showMessage(f"{name} is already in the list", 12000)
+            return
+        text = self.cand_edit.toPlainText().rstrip()
+        self.cand_edit.setPlainText((text + "\n" + name) if text else name)
+        self.cand_edit.verticalScrollBar().setValue(
+            self.cand_edit.verticalScrollBar().maximum())
+        self.log.appendPlainText(f"added to the candidate list: {name}")
+        self.statusBar().showMessage(
+            f"Added {name} — the list now has {len(self.candidates()):,} names; identify "
+            f"again to score it", 20000)
+
     def clear_candidates(self, confirm_empty: bool = False) -> None:
         """Empty the candidate list, keeping one copy so it can be restored.
 
@@ -2849,8 +2867,12 @@ class MainWindow(QMainWindow):
         # outside it answers a different question — a nudibranch at rank 1 under "reef &
         # bony fishes" — so scope is passed and out-of-scope answers are logged, not ranked.
         scope = out.get("scope")
+        # +1 slot: with top_k = len(ranked) the two arms competed for the same rows and a
+        # label answer could only appear by pushing a text answer out — or, worse, by being
+        # cut by the cap and vanishing.
         rows = (personal_classifier.merge_with_text(personal, ranked,
-                                                    top_k=max(len(ranked), 1), scope=scope)
+                                                    top_k=max(len(ranked) + 1, 2),
+                                                    scope=scope)
                 if personal_classifier is not None else
                 [{"name": r["name"], "score": r["score"], "source": "text",
                   "confidence": "text"} for r in ranked])
@@ -2864,7 +2886,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(i, 1, QTableWidgetItem(r["name"]))
             # A cosine similarity and a softmax probability are different quantities on
             # different scales; printing both as "%" invited reading 0.93 as 93% sure.
-            personal_row = r["source"] == "your labels"
+            personal_row = str(r["source"]).startswith("your labels")
             it = QTableWidgetItem(f"sim {r['score']:.2f}" if personal_row
                                   else f"{r['score']*100:.2f}%")
             if personal_row:
@@ -2874,13 +2896,23 @@ class MainWindow(QMainWindow):
             if i == 0:
                 it.setForeground(QColor("#047857"))
             self.table.setItem(i, 2, it)
-            src = "your labels" if r["source"] == "your labels" else "text"
+            src = ("your labels · NOT in list" if r.get("out_of_scope")
+                   else "your labels" if personal_row else "text")
             if r.get("confidence") == "uncertain":
                 src += " (uncertain)"
             elif r.get("confidence") == "weak":
                 src += " (weak)"
             cell = QTableWidgetItem(src)
-            if src.startswith("your labels"):
+            if r.get("out_of_scope"):
+                # amber regardless of how confident the labels are: the doubt is about the
+                # LIST, so the colour must not read as "the classifier is unsure".
+                cell.setForeground(QColor("#b45309"))
+                cell.setToolTip(
+                    "Your own labels recognised this species, but it is not in the candidate "
+                    "list you loaded — the list is missing the answer. Right-click the row → "
+                    "“Add to the candidate list” and identify again, or load the group or "
+                    "place that contains it.")
+            elif src.startswith("your labels"):
                 cell.setForeground(QColor("#1d4ed8" if r.get("confidence") == "confident"
                                           else "#b45309"))
             else:
@@ -3217,7 +3249,11 @@ class MainWindow(QMainWindow):
                         f"{x['name']} ({x['score']*100:.1f}%)" for x in ranked[:5]))
                 it.setToolTip("\n".join(bits))
                 it.setForeground(QColor("#047857"))
-            if c == 6 and person:
+            if c == 6 and r.get("out_of_scope"):
+                it.setForeground(QColor("#b45309"))
+                it.setToolTip("Your labels recognised this species, but it is NOT in the "
+                              "candidate list — the list is missing the answer.")
+            elif c == 6 and person:
                 it.setForeground(QColor("#1d4ed8"
                                         if person.get("confidence") == "confident"
                                         else "#b45309"))
@@ -3359,6 +3395,14 @@ class MainWindow(QMainWindow):
         a6 = m.addAction(f"Teach this photo as “{name}”")
         a6.triggered.connect(lambda: self.teach_current(name))
         a7 = m.addAction("Teach as another species…")
+        m.addSeparator()
+        a8 = m.addAction(f"Add “{name}” to the candidate list")
+        a8.setToolTip(
+            "Append this species to the list BioCLIP scores against.\n\n"
+            "The usual reason to: your own labels recognised something the loaded list "
+            "does not contain, so the list is missing the answer — add it rather than "
+            "tearing the photo down to the list's best guess.")
+        a8.triggered.connect(lambda: self.add_to_candidates(name))
         a7.triggered.connect(lambda: self.teach_current(None))
         a5 = m.addAction("Open in Google Images")
         a5.triggered.connect(

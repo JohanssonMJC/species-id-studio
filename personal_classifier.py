@@ -104,15 +104,25 @@ def merge_with_text(personal: dict | None, text_ranked: list[dict],
     """
     out: list[dict] = []
     pending = None          # a weak label row, waiting to sit below the best text answer
+    outside = None          # a label answer the loaded list does not contain
     if personal and personal.get("ranked"):
         name, score, margin = personal["ranked"][0]
-        if scope is None or name in scope:
-            row = {"name": name, "score": score, "source": "your labels",
-                   "confidence": personal["confidence"], "margin": margin}
-            if demote_weak and personal["confidence"] == "weak" and text_ranked:
-                pending = row                      # keep it, but not at the top
-            else:
-                out.append(row)
+        in_scope = scope is None or name in scope
+        row = {"name": name, "score": score,
+               "source": "your labels" if in_scope else "your labels (not in list)",
+               "confidence": personal["confidence"], "margin": margin,
+               "out_of_scope": not in_scope}
+        if not in_scope:
+            # NOT dropped. Dropping was the first rule and it was wrong: when the label's
+            # species is missing from the loaded list, the one arm that could be right was
+            # thrown away and the app answered from the text arm alone — wrong even for the
+            # photo that had just been taught. Keep it, below the group's own answer so it
+            # still cannot silently displace the list the user chose, and say what it means.
+            outside = row
+        elif demote_weak and personal["confidence"] == "weak" and text_ranked:
+            pending = row                          # keep it, but not at the top
+        else:
+            out.append(row)
     for row in text_ranked:
         name = row.get("name")
         if pending is not None and pending["name"] == name:
@@ -129,6 +139,12 @@ def merge_with_text(personal: dict | None, text_ranked: list[dict],
             break
     if pending is not None and len(out) < top_k:
         out.append(pending)
+    if outside is not None and not any(r["name"] == outside["name"] for r in out):
+        # Insert BEFORE the cap, or the row vanishes whenever top_k equals the number of
+        # text rows — which is exactly what the GUI passes, so the label answer was being
+        # cut off again by a different route. Rank 2 when there is a list answer to lead:
+        # visible and explained, but never displacing the list the user chose.
+        out.insert(1 if len(out) > 1 else len(out), outside)
     return out[:top_k]
 
 
@@ -144,8 +160,11 @@ def scope_note(personal: dict | None, scope: set[str] | None) -> str:
     if name in scope:
         return ""
     return (f"your labels recognised “{name}” ({personal.get('confidence')}, margin "
-            f"{personal.get('margin', 0):.3f}) but that species is not in the selected "
-            f"group, so it is not ranked here — the text ranking stands alone")
+            f"{personal.get('margin', 0):.3f}) but that species is NOT in the "
+            f"{len(scope):,} candidates you loaded — so the list is missing the answer, "
+            f"not the classifier. It is shown below the list's own top pick; add it with "
+            f"“Add to the candidate list” (right-click its row), or load the group or place "
+            f"that contains it.")
 
 
 def provenance_summary(meta: dict) -> dict:
