@@ -138,3 +138,14 @@ You do not need it. The app's other candidate sources work on their own:
   habitat. Nothing to install.
 - **`Fill from location`** — an iNaturalist summary for a place and month.
 - **`Load from file…`** — any plain-text list of names, one per line.
+
+## `_user_added.txt` is yours, and this pipeline must never touch it
+
+`make_marine_lists.py` writes the group files (`nudibranchs.txt`, `sea_slugs.txt`,
+`all_marine.txt`, …). The app lets you add species to the marine list yourself, and those
+additions go to `marine_lists/_user_added.txt` — a different file, which this pipeline does not
+create, read or overwrite. Keep it that way: an addition written into a generated file would be
+silently lost the next time the lists are rebuilt, which is worse than not offering the feature.
+
+Every load unions `_user_added.txt` in, so additions apply to whichever group you pick, and they
+survive regeneration. Deleting a line there is the way to remove a species.

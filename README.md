@@ -675,6 +675,27 @@ wrong filename is worse than no filename.
 scale to threshold — but the log says so plainly when a text-arm answer named the file, since a
 filename is a claim and "the text ranking's top pick" is a weaker one than "one of my labels".
 
+### Adding a species to your own marine list
+
+Right-click a result row → **Add "X" to my marine list**, or right-click the candidate box →
+**Add a species to my marine list…** to type one. The name is appended to
+`marine_lists/_user_added.txt` and is included in **every** marine-list load from then on,
+whichever group you pick.
+
+That file exists because the group lists are *generated*: `nudibranchs.txt` and the rest are
+written by `make_marine_lists.py` from a MarineLife export, so anything appended to one of them
+looks fine and then disappears the next time the lists are rebuilt. Additions therefore live
+beside them in a file the generator never writes, and the loader unions them in — the same
+"union, never replace" rule the online sources follow.
+
+Names are checked for binomial shape before they are written: a camera filename, a sentence or
+a rank qualifier like `Chromodoris sp.` is refused with a reason, because every name in this
+file becomes something the classifier can rank and a junk entry is scored as if it were a
+species. Duplicates are refused case-insensitively, and adding the same species twice is a
+no-op rather than a second row.
+
+Delete a line from `_user_added.txt` to stop a species being offered; nothing else refers to it.
+
 ### When your labels name a species the list does not contain
 
 The candidate list is the question being asked, so a label answer for something outside it must

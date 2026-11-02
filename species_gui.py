@@ -85,6 +85,12 @@ except Exception as exc:                       # pragma: no cover
     save_copies = None
     print(f"[warn] save_copies.py not importable: {exc}", file=sys.stderr)
 
+try:
+    import marine_additions
+except Exception as exc:                       # pragma: no cover
+    marine_additions = None
+    print(f"[warn] marine_additions.py not importable: {exc}", file=sys.stderr)
+
 APP_NAME = "Species ID Studio"
 # Tests and throwaway runs must point this elsewhere via SPECIES_CFG. Writing
 # test-derived locations into the real config makes the app start up pre-filled
@@ -1738,6 +1744,38 @@ class MainWindow(QMainWindow):
         self.where_lbl.setText(f"@ {lat:.3f}, {lon:.3f}{place} ±{self.radius.value()} km")
         self.where_lbl.setStyleSheet("color:#6b7280;")
 
+    def prompt_add_to_marine_list(self) -> None:
+        """Ask for a name, then add it — the typed path to the same file."""
+        name, ok = QInputDialog.getText(
+            self, "Add to my marine list",
+            'Scientific name ("Genus species"):')
+        if ok and name.strip():
+            self.add_to_marine_list(name.strip())
+
+    def add_to_marine_list(self, name: str) -> None:
+        """Add a species to the marine list you keep, not just to the box on screen.
+
+        Written to `marine_lists/_user_added.txt`, which `make_marine_lists.py` never touches:
+        appending to a generated group file would look like it worked and then vanish the next
+        time the lists are rebuilt. Every marine-list load unions these names in.
+        """
+        if marine_additions is None:
+            QMessageBox.warning(self, APP_NAME, "marine_additions.py is missing.")
+            return
+        path = marine_additions.additions_path(MARINE_LISTS)
+        rep = marine_additions.add(path, name)
+        if not rep["added"]:
+            self.log.appendPlainText(f"marine list: not added — {rep['reason']}")
+            self.statusBar().showMessage(f"Not added: {rep['reason']}", 15000)
+            return
+        self.log.appendPlainText(
+            f"marine list: added {rep['name']} to {path.name} ({rep['total']:,} of your own "
+            f"additions; they survive regenerating the lists)")
+        self.statusBar().showMessage(
+            f"Added {rep['name']} to your marine list — it will be in every load now", 20000)
+        # and into the list on screen, so it takes effect without reloading anything
+        self.add_to_candidates(rep["name"])
+
     def add_to_candidates(self, name: str) -> None:
         """Append one species to the candidate list — no typing, no lost list."""
         name = (name or "").strip()
@@ -1823,6 +1861,14 @@ class MainWindow(QMainWindow):
         a.triggered.connect(self.sort_candidates)
         a = m.addAction("Remove duplicates")
         a.triggered.connect(self.dedupe_candidates)
+        m.addSeparator()
+        a = m.addAction("Add a species to my marine list…")
+        a.setToolTip(
+            "Type a name and it is appended to "
+            + (marine_additions.ADDITIONS_NAME if marine_additions else "_user_added.txt")
+            + ", which every marine-list load includes and which regenerating the lists "
+              "never touches.")
+        a.triggered.connect(self.prompt_add_to_marine_list)
         m.exec(self.cand_edit.mapToGlobal(pos))
 
     def sort_candidates(self) -> None:
@@ -1972,12 +2018,25 @@ class MainWindow(QMainWindow):
         if not names:
             QMessageBox.information(self, APP_NAME, f"{path.name} holds no names.")
             return
+        # Your own additions ride along with every group, including "all marine species": the
+        # reason you added one was that the generated lists kept omitting it.
+        added: list[str] = []
+        if marine_additions is not None:
+            added = marine_additions.load(marine_additions.additions_path(MARINE_LISTS))
+            if added:
+                before = len(names)
+                names = marine_additions.merge(names, added)
+                if len(names) > before:
+                    self.log.appendPlainText(
+                        f"marine list: {len(names)-before} of your own additions included "
+                        f"({', '.join(added[:3])}{'…' if len(added) > 3 else ''})")
         self.cand_group = path.stem.replace("_", " ")
         replace = not getattr(self, "add_to_list_chk", None) or \
             not self.add_to_list_chk.isChecked()
         kept = self._set_candidates(names, replace=replace, source="marine list")
         self.log.appendPlainText(
             f"marine list: {path.stem} — {len(names):,} names"
+            + (f" (incl. {len(added)} of yours)" if added else "")
             + ("" if replace else f"; kept {kept} already in the list"))
         self.statusBar().showMessage(
             f"loaded {len(names):,} marine species from {path.name}", 20000)
@@ -2909,9 +2968,9 @@ class MainWindow(QMainWindow):
                 cell.setForeground(QColor("#b45309"))
                 cell.setToolTip(
                     "Your own labels recognised this species, but it is not in the candidate "
-                    "list you loaded — the list is missing the answer. Right-click the row → "
-                    "“Add to the candidate list” and identify again, or load the group or "
-                    "place that contains it.")
+                    "list you loaded — the list is missing the answer.\n\n"
+                    "Right-click the row → “Add to the candidate list” for this photo, or "
+                    "“Add to my marine list” to keep it for every future load.")
             elif src.startswith("your labels"):
                 cell.setForeground(QColor("#1d4ed8" if r.get("confidence") == "confident"
                                           else "#b45309"))
@@ -3396,6 +3455,13 @@ class MainWindow(QMainWindow):
         a6.triggered.connect(lambda: self.teach_current(name))
         a7 = m.addAction("Teach as another species…")
         m.addSeparator()
+        a8b = m.addAction(f"Add “{name}” to my marine list")
+        a8b.setToolTip(
+            f"Append it to {marine_additions.ADDITIONS_NAME if marine_additions else '_user_added.txt'} "
+            "in your marine_lists folder, and to the list on screen.\n\n"
+            "Kept in a separate file on purpose: the group lists are generated, so an addition "
+            "written into one of them would disappear the next time they are rebuilt.")
+        a8b.triggered.connect(lambda: self.add_to_marine_list(name))
         a8 = m.addAction(f"Add “{name}” to the candidate list")
         a8.setToolTip(
             "Append this species to the list BioCLIP scores against.\n\n"
