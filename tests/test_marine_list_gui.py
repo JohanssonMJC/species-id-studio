@@ -94,6 +94,34 @@ names = win.candidates()
 check("the regenerated name appears", "Doto ostenta" in names, names)
 check("the user's addition survives", "Phyllodesmium poindimiei" in names, names)
 
+print("5. the automatic check: added only when no list already holds it")
+win.log.clear()
+win.ensure_in_marine_list("Doto rosea", "test")
+check("a species already in the group is not written",
+      "no addition needed" in win.log.toPlainText(), win.log.toPlainText()[-160:])
+check("and the additions file still holds only the earlier entry",
+      MA.load(add_file) == ["Phyllodesmium poindimiei"], MA.load(add_file))
+
+win.log.clear()
+win.ensure_in_marine_list("Nembrotha chamberlaini", "your labels recognised it")
+check("a species in no list is added",
+      MA.load(add_file) == ["Phyllodesmium poindimiei", "Nembrotha chamberlaini"],
+      MA.load(add_file))
+check("the log explains why it was added", "in none of your lists" in win.log.toPlainText(),
+      win.log.toPlainText()[-200:])
+
+win.ensure_in_marine_list("Nembrotha chamberlaini")
+check("a second check does not duplicate", len(MA.load(add_file)) == 2, MA.load(add_file))
+
+print("6. with automatic adding off, it only reports")
+win.log.clear()
+win.cfg["auto_add_to_marine_list"] = False
+win.ensure_in_marine_list("Doto ostenta", "you taught it")
+check("nothing was written", "Doto ostenta" not in MA.load(add_file), MA.load(add_file))
+check("the log says the species is missing from every list",
+      "in none of your lists" in win.log.toPlainText(), win.log.toPlainText()[-160:])
+win.cfg["auto_add_to_marine_list"] = True
+
 shutil.rmtree(work, ignore_errors=True)
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

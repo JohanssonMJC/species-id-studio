@@ -138,6 +138,39 @@ def add(path: str | Path, name: str) -> dict:
     return {"added": True, "reason": "", "name": n, "total": len(existing) + 1}
 
 
+def membership(marine_dir: str | Path, name: str) -> dict:
+    """Is this species already in the marine lists? Returns {in_additions, in_groups}.
+
+    Checked before adding anything, because a list that already contains the species does not
+    need an addition — and an additions file full of names the generated lists already hold is
+    noise that hides the ones that actually matter.
+    """
+    n = clean(name)
+    key = n.lower()
+    out: dict = {"in_additions": False, "in_groups": []}
+    if not key:
+        return out
+    d = Path(marine_dir)
+    add_file = additions_path(d)
+    if any(x.lower() == key for x in load(add_file)):
+        out["in_additions"] = True
+    if not d.is_dir():
+        return out
+    for f in sorted(d.glob("*.txt")):
+        if f.name == ADDITIONS_NAME:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and clean(line).lower() == key:
+                out["in_groups"].append(f.stem)
+                break
+    return out
+
+
 def merge(base: list[str], extra: list[str]) -> list[str]:
     """`base` unchanged and in its own order, then any of `extra` it does not already hold.
 

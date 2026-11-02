@@ -1744,6 +1744,13 @@ class MainWindow(QMainWindow):
         self.where_lbl.setText(f"@ {lat:.3f}, {lon:.3f}{place} ±{self.radius.value()} km")
         self.where_lbl.setStyleSheet("color:#6b7280;")
 
+    def on_auto_add_toggled(self, on: bool) -> None:
+        self.cfg["auto_add_to_marine_list"] = bool(on)
+        save_cfg(self.cfg)
+        self.log.appendPlainText(
+            "marine list: missing species are "
+            + ("added automatically" if on else "only reported, not added"))
+
     def prompt_add_to_marine_list(self) -> None:
         """Ask for a name, then add it — the typed path to the same file."""
         name, ok = QInputDialog.getText(
@@ -1751,6 +1758,48 @@ class MainWindow(QMainWindow):
             'Scientific name ("Genus species"):')
         if ok and name.strip():
             self.add_to_marine_list(name.strip())
+
+    def ensure_in_marine_list(self, name: str, why: str = "") -> None:
+        """Make sure a species you trust is in your marine list — adding it if it is missing.
+
+        Called where a species becomes known-good (you taught it a label, or your own labels
+        named it and the loaded list did not contain it). The check comes first: a species the
+        generated lists already hold needs no addition, and an additions file padded with names
+        that were never missing hides the ones that matter.
+
+        Set `auto_add_to_marine_list` to false to be asked instead of written to; the checkbox is
+        in the candidate box's right-click menu.
+        """
+        if marine_additions is None or not (name or "").strip():
+            return
+        try:
+            m = marine_additions.membership(MARINE_LISTS, name)
+        except Exception as exc:                       # never let bookkeeping break teaching
+            self.log.appendPlainText(f"marine list check skipped: {exc}")
+            return
+        if m["in_additions"]:
+            return
+        if m["in_groups"]:
+            self.log.appendPlainText(
+                f"marine list: {name} is already in {', '.join(m['in_groups'])} — no addition "
+                f"needed")
+            return
+        if not bool(self.cfg.get("auto_add_to_marine_list", True)):
+            self.log.appendPlainText(
+                f"marine list: {name} is in none of your lists"
+                + (f" ({why})" if why else "")
+                + " — right-click a result row to add it")
+            return
+        rep = marine_additions.add(marine_additions.additions_path(MARINE_LISTS), name)
+        if rep["added"]:
+            self.log.appendPlainText(
+                f"marine list: {name} was in none of your lists"
+                + (f" ({why})" if why else "")
+                + f" — added to {marine_additions.ADDITIONS_NAME} so every load includes it")
+            self.statusBar().showMessage(
+                f"{name} added to your marine list — it will be offered from now on", 20000)
+        elif rep["reason"]:
+            self.log.appendPlainText(f"marine list: {name} not added — {rep['reason']}")
 
     def add_to_marine_list(self, name: str) -> None:
         """Add a species to the marine list you keep, not just to the box on screen.
@@ -1869,6 +1918,16 @@ class MainWindow(QMainWindow):
             + ", which every marine-list load includes and which regenerating the lists "
               "never touches.")
         a.triggered.connect(self.prompt_add_to_marine_list)
+        a = m.addAction("Add a missing species to my marine list automatically")
+        a.setCheckable(True)
+        a.setChecked(bool(self.cfg.get("auto_add_to_marine_list", True)))
+        a.setToolTip(
+            "ON (default): when you teach a photo a label, or your own labels recognise a "
+            "species the loaded list does not contain, that species is appended to "
+            + (marine_additions.ADDITIONS_NAME if marine_additions else "_user_added.txt")
+            + " if no marine list already holds it.\n\n"
+            "OFF: the same situation is only logged, and you add it yourself.")
+        a.toggled.connect(self.on_auto_add_toggled)
         m.exec(self.cand_edit.mapToGlobal(pos))
 
     def sort_candidates(self) -> None:
@@ -2737,6 +2796,9 @@ class MainWindow(QMainWindow):
                 "confidence but are no evidence of accuracy.")
         self.statusBar().showMessage(
             f"Learned {out['species']} — {out['photos']} labelled photos", 20000)
+        # A species you taught is one you can recognise, so it belongs in your own marine list.
+        # Checked first: most taught species are already in one, and need nothing.
+        self.ensure_in_marine_list(out["species"], "you taught it")
 
     def _on_teach_fail(self, msg: str) -> None:
         self.log.appendPlainText(f"Could not add the label: {msg}")
@@ -2935,6 +2997,12 @@ class MainWindow(QMainWindow):
                 if personal_classifier is not None else
                 [{"name": r["name"], "score": r["score"], "source": "text",
                   "confidence": "text"} for r in ranked])
+        # The label arm named a species the loaded list does not hold — the case where your own
+        # evidence beats the list, so make sure the marine list you keep has it too.
+        for r in rows:
+            if r.get("out_of_scope"):
+                self.ensure_in_marine_list(r["name"], "your labels recognised it")
+                break
         note = (personal_classifier.scope_note(personal, scope)
                 if personal_classifier is not None else "")
         if note:

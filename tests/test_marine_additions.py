@@ -111,6 +111,37 @@ with tempfile.TemporaryDirectory() as td:
           ma.load(ma.additions_path(td)) == ["Phyllodesmium poindimiei"],
           ma.load(ma.additions_path(td)))
 
+print("5b. membership says whether a list already holds the species")
+with tempfile.TemporaryDirectory() as td:
+    d = pathlib.Path(td)
+    (d / "nudibranchs.txt").write_text("# a comment\nDoto rosea\nChromodoris annae\n")
+    (d / "all_marine.txt").write_text("Doto rosea\nOctopus vulgaris\n")
+    m = ma.membership(d, "Doto rosea")
+    check("found in both group files, sorted", m["in_groups"] == ["all_marine", "nudibranchs"], m)
+    check("not in the additions file yet", m["in_additions"] is False, m)
+    check("single-group hit", ma.membership(d, "Octopus vulgaris")["in_groups"] == ["all_marine"])
+    check("absent everywhere", ma.membership(d, "Nembrotha chamberlaini")
+          == {"in_additions": False, "in_groups": []},
+          ma.membership(d, "Nembrotha chamberlaini"))
+    check("case-insensitive", ma.membership(d, "chromodoris ANNAE")["in_groups"] == ["nudibranchs"])
+
+    ma.add(ma.additions_path(d), "Nembrotha chamberlaini")
+    m2 = ma.membership(d, "nembrotha chamberlaini")
+    check("an addition is reported as such", m2["in_additions"] is True, m2)
+    check("but not as being in a generated list", m2["in_groups"] == [], m2)
+    check("the additions file itself is not scanned as a group",
+          ma.membership(d, "Nembrotha chamberlaini")["in_groups"] == [])
+
+print("5c. the file is not created when nothing needs adding")
+with tempfile.TemporaryDirectory() as td:
+    d = pathlib.Path(td)
+    (d / "nudibranchs.txt").write_text("Doto rosea\n")
+    check("a present species needs no file",
+          not ma.additions_path(d).exists()
+          and ma.membership(d, "Doto rosea")["in_groups"] == ["nudibranchs"])
+    check("and no file appears after checking it",
+          not ma.additions_path(d).exists())
+
 print("6. an unwritable location reports a reason instead of raising")
 with tempfile.TemporaryDirectory() as td:
     blocked = pathlib.Path(td) / "ro"

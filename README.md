@@ -694,6 +694,25 @@ file becomes something the classifier can rank and a junk entry is scored as if 
 species. Duplicates are refused case-insensitively, and adding the same species twice is a
 no-op rather than a second row.
 
+#### The check runs by itself
+
+Two moments are enough to know a species deserves to be in your list, and at both the app now
+checks first and writes only if nothing already holds it:
+
+- **you teach a photo a label** — you have just demonstrated you can recognise that species;
+- **your own labels recognise a species the loaded candidate list does not contain** — the amber
+  `your labels · NOT in list` row.
+
+The check covers *every* group file, not just the one loaded: a species already in `all_marine.txt`
+needs no addition, and an additions file padded with names that were never missing would hide
+the ones that were. When it writes, the log says so — *"Phyllodesmium poindimiei was in none of
+your lists (your labels recognised it) — added to _user_added.txt so every load includes it"* —
+and when it does not, it says which list already had it.
+
+Turn it off with the candidate box's right-click menu → **Add a missing species to my marine list
+automatically** (remembered in your config). Off means the same situation is only reported, and
+you decide.
+
 Delete a line from `_user_added.txt` to stop a species being offered; nothing else refers to it.
 
 ### When your labels name a species the list does not contain
