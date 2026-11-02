@@ -694,6 +694,25 @@ file becomes something the classifier can rank and a junk entry is scored as if 
 species. Duplicates are refused case-insensitively, and adding the same species twice is a
 no-op rather than a second row.
 
+#### The candidate list stays primary
+
+Your own added species are **not** folded into the pool by default: the list you loaded is the
+question being asked, and quietly adding names would move every percentage. A checkbox beside
+`add to list` — **include my added species** — opts in, and then:
+
+- the count line admits it: `4 candidates · +2 of yours · GBIF, 100 km`;
+- their rows are marked `text · your list` in the results, so nothing looks like it came from the
+  candidate list when it did not;
+- switching the checkbox re-applies to the list already on screen, rather than waiting for the
+  next load.
+
+Loading a **marine list** always includes them, switch or not — they are part of that list, not an
+optional extra. The switch governs the other sources: GBIF, iNaturalist and Load from file.
+
+Your **own labelled photos** are consulted either way, because they are evidence about the photo
+rather than a member of the list. When one names a species the candidate list does not hold, the
+row is marked `your labels · NOT in list` in amber and sits below the list's own top pick.
+
 #### The check runs by itself
 
 Two moments are enough to know a species deserves to be in your list, and at both the app now

@@ -122,6 +122,66 @@ check("the log says the species is missing from every list",
       "in none of your lists" in win.log.toPlainText(), win.log.toPlainText()[-160:])
 win.cfg["auto_add_to_marine_list"] = True
 
+print("7. the candidate list stays primary; additions are opt-in")
+win.cfg["include_my_additions"] = False
+win.include_additions_chk.setChecked(False)
+win._set_candidates(["Doto rosea", "Doto rosacea"], replace=True, source="GBIF, 100 km")
+app.processEvents()
+check("switch off: exactly the loaded list", win.candidates() == ["Doto rosea", "Doto rosacea"],
+      win.candidates())
+check("nothing marked as yours", win._additions_in_play == set(), win._additions_in_play)
+check("the count names the source only", "+0 of yours" not in win.cand_count.text()
+      and "GBIF" in win.cand_count.text(), win.cand_count.text())
+
+win.include_additions_chk.setChecked(True)
+app.processEvents()
+names_now = win.candidates()
+check("switch on: the additions join the pool",
+      {"Phyllodesmium poindimiei", "Nembrotha chamberlaini"} <= set(names_now), names_now)
+check("the count admits how many are yours", "+2 of yours" in win.cand_count.text(),
+      win.cand_count.text())
+check("the setting is remembered in the config",
+      win.cfg.get("include_my_additions") is True, win.cfg.get("include_my_additions"))
+
+print("8. a result from your additions says so")
+win.image_path = "/tmp/x.jpg"
+win._on_bio({"ranked": [{"name": "Phyllodesmium poindimiei", "score": 0.31},
+                        {"name": "Doto rosea", "score": 0.12}],
+             "scope": set(names_now), "candidates_scored": len(names_now), "seconds": 0.1})
+app.processEvents()
+rows = {win.table.item(r, 1).text(): win.table.item(r, 3).text()
+        for r in range(win.table.rowCount())}
+check("the addition is marked, not passed off as the list",
+      rows.get("Phyllodesmium poindimiei") == "text · your list", rows)
+check("a list species stays plain", rows.get("Doto rosea") == "text", rows)
+
+win.include_additions_chk.setChecked(False)
+app.processEvents()
+check("switching off drops them again",
+      "Phyllodesmium poindimiei" not in win.candidates(), win.candidates())
+
+print("9. a label answer outside both list and additions is still marked NOT in list")
+win._on_bio({"ranked": [{"name": "Doto rosea", "score": 0.4}],
+             "personal": {"ranked": [("Trapania toddi", 0.95, 0.3)], "top": "Trapania toddi",
+                          "score": 0.95, "margin": 0.3, "confidence": "confident"},
+             "scope": {"Doto rosea", "Doto rosacea"},
+             "candidates_scored": 2, "seconds": 0.1})
+app.processEvents()
+rows = {win.table.item(r, 1).text(): win.table.item(r, 3).text()
+        for r in range(win.table.rowCount())}
+check("the learned species is flagged as not from the list",
+      rows.get("Trapania toddi") == "your labels · NOT in list", rows)
+
+print("10. a marine-list load always brings its additions")
+win.include_additions_chk.setChecked(False)
+app.processEvents()
+win.cand_edit.setPlainText("")
+win.load_marine_group()
+app.processEvents()
+check("your marine species are part of the marine list",
+      "Phyllodesmium poindimiei" in win.candidates(), win.candidates())
+check("and are marked as yours", "+1 of yours" in win.cand_count.text(), win.cand_count.text())
+
 shutil.rmtree(work, ignore_errors=True)
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

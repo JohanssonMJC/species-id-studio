@@ -1187,6 +1187,23 @@ class MainWindow(QMainWindow):
             "count then covers the mixture, and the group label describes only the "
             "last load — use it when you deliberately want a combined pool.")
         r2b.addWidget(self.add_to_list_chk)
+        # The candidate list is the question being asked, so your own added species are NOT
+        # folded in by default — that would change the pool behind your back and move every
+        # percentage. This switch includes them when you want them scored.
+        self.include_additions_chk = QCheckBox("include my added species")
+        self.include_additions_chk.setChecked(bool(self.cfg.get("include_my_additions", False)))
+        self.include_additions_chk.setToolTip(
+            "The candidate list stays primary: OFF (default) scores exactly the names you "
+            "loaded.\n\n"
+            "ON: species from your own additions file are added to the pool, so a name the "
+            "generated lists omit is still considered. The count line then says "
+            "“+N of yours” and those rows are marked “your list” in the results."
+            "\n\nLoading a marine list always includes them, because they are part of that "
+            "list. This switch governs the other sources: GBIF, iNaturalist and Load from file."
+            "\n\nYour own labelled photos are consulted either way — a result from them "
+            "rather than from the candidate list is always marked.")
+        self.include_additions_chk.toggled.connect(self.on_include_additions_toggled)
+        r2b.addWidget(self.include_additions_chk)
         # Persistent "where" indicator. The 4-species Anilao answer came from a place
         # lookup that silently resolved to a different Anilao 1,000 km away; the only
         # clue was the coordinates in a log line nobody reads. Showing the search area
@@ -1988,6 +2005,9 @@ class MainWindow(QMainWindow):
         if len(grp) > 60:
             grp = grp[:57].rstrip() + "…"
         suffix = f" — {grp}" if grp else ""
+        mine = len(getattr(self, "_additions_in_play", ()) or ())
+        if mine:
+            suffix += f"  ·  +{mine} of yours"
         src = str(getattr(self, "cand_source", "") or "")
         if len(src) > 70:
             src = src[:67].rstrip() + "…"
@@ -2093,12 +2113,33 @@ class MainWindow(QMainWindow):
         replace = not getattr(self, "add_to_list_chk", None) or \
             not self.add_to_list_chk.isChecked()
         kept = self._set_candidates(names, replace=replace, source="marine list")
+        if added:
+            # A marine-list load ALWAYS carries the species you added to your marine list —
+            # they are part of that list, not an optional extra. Recorded after the funnel,
+            # which resets the set, so the rows are marked "your list" either way.
+            self._additions_in_play = {n.strip().lower() for n in added}
+            self._update_cand_count()
         self.log.appendPlainText(
             f"marine list: {path.stem} — {len(names):,} names"
             + (f" (incl. {len(added)} of yours)" if added else "")
             + ("" if replace else f"; kept {kept} already in the list"))
         self.statusBar().showMessage(
             f"loaded {len(names):,} marine species from {path.name}", 20000)
+
+    def on_include_additions_toggled(self, on: bool) -> None:
+        self.cfg["include_my_additions"] = bool(on)
+        save_cfg(self.cfg)
+        # Apply to the list already on screen rather than waiting for the next load: switching
+        # the option on and seeing nothing change would look like it did not work.
+        names = self.candidates()
+        base = [n for n in names
+                if n.strip().lower() not in getattr(self, "_additions_in_play", set())]
+        if not base and not on:
+            base = names
+        self._set_candidates(base, replace=True, source=self.cand_source or "")
+        self.log.appendPlainText(
+            f"candidate list: your own added species are "
+            f"{'included in' if on else 'left out of'} the pool")
 
     def on_online_toggle(self, on: bool) -> None:
         self.cfg["online"] = bool(on); save_cfg(self.cfg)
@@ -2160,6 +2201,24 @@ class MainWindow(QMainWindow):
         # every species recorded within 100 km or only this group's, and that difference is
         # exactly what makes a list representative or not.
         self.cand_source = source or ""
+        # Your own added species join the pool only when the switch is on. Done here, in the
+        # one funnel, so a GBIF list and a marine group behave the same way.
+        self._additions_in_play: set[str] = set()
+        if (marine_additions is not None
+                and bool(self.cfg.get("include_my_additions", False))):
+            try:
+                mine = marine_additions.load(
+                    marine_additions.additions_path(MARINE_LISTS))
+            except Exception:
+                mine = []
+            if mine:
+                before = len(names)
+                names = marine_additions.merge(list(names), mine)
+                self._additions_in_play = {n.strip().lower() for n in mine}
+                if len(names) > before:
+                    self.log.appendPlainText(
+                        f"candidate list: {len(names)-before} of your own added species "
+                        f"included — the count says so, and their rows are marked “your list”")
         if replace:
             self.cand_edit.setPlainText("\n".join(names))
             self._update_cand_count()
@@ -3025,6 +3084,9 @@ class MainWindow(QMainWindow):
             self.table.setItem(i, 2, it)
             src = ("your labels · NOT in list" if r.get("out_of_scope")
                    else "your labels" if personal_row else "text")
+            if not personal_row and str(r["name"]).strip().lower() in \
+                    getattr(self, "_additions_in_play", set()):
+                src = "text · your list"      # scored, but not from the candidate list you loaded
             if r.get("confidence") == "uncertain":
                 src += " (uncertain)"
             elif r.get("confidence") == "weak":
