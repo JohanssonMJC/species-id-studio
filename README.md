@@ -236,6 +236,17 @@ right.
 `fetch_candidates(depth=...)` still exists for scripts that want a range, and the CLI
 takes `--depth MIN,MAX` with that warning in its help text. The GUI never passes it.
 
+- **GBIF links cannot work from every network.** On this machine `gbif.org` answers **403 to
+  every path, the homepage included** (Cloudflare), while `api.gbif.org` answers normally — so
+  the app looks the name up in-app and offers the species page URL for copying rather than
+  opening a link that would land on an error page. On another network, or on a phone, the same
+  URL opens fine.
+- **WoRMS links are resolved, not searched.** `aphia.php?p=taxlist&searchpar=<name>` is a search
+  page that ignores the parameter — the browser opened WoRMS with nothing selected. The action
+  now asks the WoRMS REST API for the AphiaID and opens `aphia.php?p=taxdetails&id=<AphiaID>`, so
+  you land on the species. Several records for one name (an accepted species and a synonym, or
+  taxa in different groups) are offered as a list instead of being silently resolved.
+
 - **No account or API key required.**
 - **Loading replaces the list** (there is an `add to list` checkbox if you want to
   merge instead).

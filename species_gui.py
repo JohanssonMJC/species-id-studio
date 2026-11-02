@@ -91,6 +91,20 @@ except Exception as exc:                       # pragma: no cover
     marine_additions = None
     print(f"[warn] marine_additions.py not importable: {exc}", file=sys.stderr)
 
+try:
+    import worms_lookup
+except Exception as exc:                       # pragma: no cover
+    worms_lookup = None
+    print(f"[warn] worms_lookup.py not importable: {exc}", file=sys.stderr)
+
+# Every attribute that can hold a tracked QThread. ONE list, consumed by _reap(), because the
+# hand-written subset it replaced drifted: teach_worker was missing (it crashed), and then
+# worms_worker was missing (the guard blocked every lookup after the first). Adding a worker
+# means adding it here, and tests/test_worker_registry.py fails if you forget.
+WORKER_ATTRS = ("worker", "api", "batch", "placer", "gbiFer", "teach_worker",
+                "personal_worker", "gbif_worker", "place_worker", "reason_worker",
+                "worms_worker")
+
 APP_NAME = "Species ID Studio"
 # Tests and throwaway runs must point this elsewhere via SPECIES_CFG. Writing
 # test-derived locations into the real config makes the app start up pre-filled
@@ -427,6 +441,30 @@ class GbifLookupWorker(QThread):
                 self.failed.emit("gbif_candidates.py is missing from the app directory.")
                 return
             self.done.emit(gbif_candidates.lookup_species(self.name))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+class WormsWorker(QThread):
+    """Resolve one name to its WoRMS species page.
+
+    A worker rather than a direct call because it is a network round trip: doing it inline
+    would freeze the window for as long as marinespecies.org takes to answer, which is the same
+    failure the GBIF lookup was moved off the GUI thread for.
+    """
+    done = pyqtSignal(list, str)          # records, the name that was asked about
+    failed = pyqtSignal(str)
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    def run(self) -> None:
+        try:
+            if worms_lookup is None:
+                self.failed.emit("worms_lookup.py is missing from the app directory.")
+                return
+            self.done.emit(worms_lookup.fetch(self.name), self.name)
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
@@ -1527,8 +1565,7 @@ class MainWindow(QMainWindow):
         # Every tracked worker, not a hand-written subset: teach_worker was missing here
         # while its result slot also nulled the reference itself, so "Teach from photo"
         # destroyed a QThread from inside its own run() and the process aborted.
-        for attr in ("worker", "api", "batch", "placer", "gbiFer", "teach_worker",
-                     "personal_worker", "gbif_worker", "place_worker", "reason_worker"):
+        for attr in WORKER_ATTRS:
             if w is not None and getattr(self, attr, None) is w:
                 setattr(self, attr, None)
         if w is not None:
@@ -2526,23 +2563,44 @@ class MainWindow(QMainWindow):
             lines.append("")
             lines.append("Not an EXACT match — GBIF is offering something close, so check "
                          "the name rather than trusting it.")
+        # The GBIF key is the usageKey — NOT the WoRMS AphiaID. Using the wrong id here would
+        # build a link to a species that does not exist, which is worse than no link.
+        key = d.get("usageKey") or d.get("acceptedKey") or d.get("speciesKey")
+        species_url = f"https://www.gbif.org/species/{key}" if key else ""
         text = "\n".join(lines)
         self.log.appendPlainText("GBIF: " + text.replace("\n", " | "))
+        if species_url:
+            # In the log as well as the dialog: the clipboard is one route, the log another,
+            # and this line survives the dialog being closed.
+            self.log.appendPlainText(f"GBIF species page: {species_url}")
         box = QMessageBox(self)
         box.setWindowTitle(APP_NAME)
         box.setIcon(QMessageBox.Icon.Information)
         box.setText(text)
-        box.setInformativeText("In-app lookup: gbif.org itself refuses deep links from "
-                               "some networks (Cloudflare 403).")
+        box.setInformativeText(
+            "These values come from api.gbif.org, which answers.\n\n"
+            "The gbif.org WEBSITE does not answer from this machine at all — Cloudflare "
+            "returns 403 for every path, the homepage included — so an “open in GBIF” link "
+            "would show an error page rather than this species. That is why the lookup runs "
+            "here instead. On another network, or on a phone, the page below usually opens."
+            + (f"\n\n{species_url}" if species_url else ""))
+        b_copy = (box.addButton("Copy species URL", QMessageBox.ButtonRole.ActionRole)
+                  if species_url else None)
+        b_try = (box.addButton("Try gbif.org anyway", QMessageBox.ButtonRole.ActionRole)
+                 if species_url else None)
         worms = box.addButton("Open in WoRMS", QMessageBox.ButtonRole.ActionRole)
         inat = box.addButton("Open in iNaturalist", QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Close)
         box.exec()
-        if box.clickedButton() is worms:
-            QDesktopServices.openUrl(QUrl(
-                "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar="
-                + name.replace(" ", "+")))
-        elif box.clickedButton() is inat:
+        clicked = box.clickedButton()
+        if b_copy is not None and clicked is b_copy:
+            QApplication.clipboard().setText(species_url)
+            self.statusBar().showMessage(f"Copied {species_url}", 15000)
+        elif b_try is not None and clicked is b_try:
+            QDesktopServices.openUrl(QUrl(species_url))
+        elif clicked is worms:
+            self.open_worms(name)
+        elif clicked is inat:
             QDesktopServices.openUrl(QUrl(
                 f"https://www.inaturalist.org/search?q={name}"))
 
@@ -2862,6 +2920,75 @@ class MainWindow(QMainWindow):
     def _on_teach_fail(self, msg: str) -> None:
         self.log.appendPlainText(f"Could not add the label: {msg}")
         QMessageBox.warning(self, APP_NAME, f"Could not add the label.\n\n{msg}")
+
+    # -- WoRMS, resolved rather than searched -------------------------------- #
+    def open_worms(self, name: str) -> None:
+        """Open the WoRMS page FOR THIS SPECIES, not the WoRMS front page.
+
+        The old action linked `aphia.php?p=taxlist&searchpar=<name>`, which is a search page and
+        ignores the term — the browser opened WoRMS with nothing selected. The REST API answers
+        with the AphiaID and `taxdetails&id=` is the species page itself.
+        """
+        if worms_lookup is None:
+            QMessageBox.warning(self, APP_NAME, "worms_lookup.py is missing.")
+            return
+        name = (name or "").strip()
+        if not name:
+            return
+        if getattr(self, "worms_worker", None):
+            return
+        self.statusBar().showMessage(f"asking WoRMS about “{name}”…", 8000)
+        self.worms_worker = WormsWorker(name)
+        self.worms_worker.done.connect(self._on_worms)
+        self.worms_worker.failed.connect(self._on_worms_fail)
+        self._track(self.worms_worker)
+        self.worms_worker.start()
+
+    def _on_worms(self, records: list, name: str) -> None:
+        if worms_lookup is None:
+            return
+        pick, allrec = worms_lookup.choose(records)
+        if pick is not None:
+            QDesktopServices.openUrl(QUrl(pick["url"]))
+            extra = "" if len(allrec) == 1 else f" (chose the accepted record of {len(allrec)})"
+            self.log.appendPlainText(
+                f"WoRMS: {pick['name']} — {pick['status']}, {pick['rank']}, "
+                f"AphiaID {pick['aphia_id']}{extra}")
+            self.statusBar().showMessage(
+                f"WoRMS: {pick['name']} ({pick['status']}, AphiaID {pick['aphia_id']})", 20000)
+            return
+        if not allrec:
+            box = QMessageBox(self)
+            box.setWindowTitle(APP_NAME)
+            box.setText(f"WoRMS has no marine record of “{name}”.")
+            box.setInformativeText(
+                "That is itself an answer: the name is either not marine, a freshwater or "
+                "terrestrial taxon, misspelt, or not yet in WoRMS. Open the search page to "
+                "check spellings?")
+            b_search = box.addButton("Open the search page", QMessageBox.ButtonRole.ActionRole)
+            box.addButton(QMessageBox.StandardButton.Close)
+            box.exec()
+            if box.clickedButton() is b_search:
+                QDesktopServices.openUrl(QUrl(worms_lookup.search_url(name)))
+            self.log.appendPlainText(f"WoRMS: no record for “{name}”")
+            return
+        # several records: never pick one silently — the name is ambiguous in WoRMS itself
+        items = [worms_lookup.label(r) for r in allrec]
+        choice, ok = QInputDialog.getItem(
+            self, "WoRMS: which record?",
+            f"WoRMS has {len(allrec)} records for “{name}”.\n\n"
+            "An accepted species and a synonym can share a name, and so can taxa in different "
+            "groups — pick the one you mean.", items, 0, False)
+        if not ok or not choice:
+            return
+        rec = allrec[items.index(choice)]
+        QDesktopServices.openUrl(QUrl(rec["url"]))
+        self.log.appendPlainText(
+            f"WoRMS: {rec['name']} — {rec['status']}, {rec['rank']}, AphiaID {rec['aphia_id']}")
+
+    def _on_worms_fail(self, msg: str) -> None:
+        self.log.appendPlainText(f"WoRMS: {msg}")
+        self.statusBar().showMessage(f"WoRMS lookup failed: {msg}", 15000)
 
     # -- your own labels --------------------------------------------------- #
     def _personal_set(self):
@@ -3571,13 +3698,12 @@ class MainWindow(QMainWindow):
         # NOT gbif.org: every deep link on that site is refused by Cloudflare on this
         # network — the homepage loads, /species/… and /occurrence/… return 403 in a real
         # browser. The API answers, so ask the API and show the verdict here.
-        a4 = m.addAction("Look up in GBIF (in this app)")
+        a4 = m.addAction("Look up in GBIF (in this app — the website is blocked here)")
         a4.triggered.connect(lambda: self.lookup_gbif(name))
         a4b = m.addAction("Open in WoRMS (browser)")
-        a4b.triggered.connect(
-            lambda: QDesktopServices.openUrl(QUrl(
-                "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar="
-                + name.replace(" ", "+"))))
+        a4b.setToolTip("Resolves the name to its AphiaID first, so the browser opens the "
+                       "SPECIES page — the old link opened WoRMS with nothing selected.")
+        a4b.triggered.connect(lambda: self.open_worms(name))
         m.addSeparator()
         a5b = m.addAction(f"Save a copy named “{name}”")
         a5b.triggered.connect(lambda: self.save_copy_named(name))
@@ -3655,8 +3781,7 @@ class MainWindow(QMainWindow):
             m.addAction(f"Look up “{selected}” in GBIF (in this app)").triggered.connect(
                 lambda: self.lookup_gbif(selected))
             m.addAction(f"Open “{selected}” in WoRMS (browser)").triggered.connect(
-                lambda: QDesktopServices.openUrl(QUrl(
-                    "https://www.marinespecies.org/aphia.php?p=taxlist&searchpar=" + q)))
+                lambda: self.open_worms(selected))
             m.addAction(f"Search images for “{selected}”").triggered.connect(
                 lambda: QDesktopServices.openUrl(
                     QUrl(f"https://www.google.com/search?tbm=isch&q={q}")))
