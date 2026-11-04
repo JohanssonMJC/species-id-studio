@@ -1311,7 +1311,9 @@ class MainWindow(QMainWindow):
         self.cand_edit.setPlaceholderText(
             "No species loaded yet. Pick a source:\n"
             "  • Marine list…  — your dive species, narrowed to a group (offline)\n"
-            "  • Fill from location — what is recorded near a place + group + month\n"
+            "  • Place list (GBIF)  — OCCURRENCES near the place, ranked by record count\n"
+            "  • Fill from location (iNaturalist)  — research-grade OBSERVATIONS, ranked by\n"
+            "     votes, with an optional month filter\n"
             "  • Load from file… — your own list, one scientific name per line\n"
             "Or just type names here, one per line.")
         # How many candidates are loaded, shown BEFORE running BioCLIP: the classifier
@@ -1348,14 +1350,18 @@ class MainWindow(QMainWindow):
         self.gbif_btn = QPushButton("Place list (GBIF)")
         self.gbif_btn.clicked.connect(self.load_gbif)
         self.gbif_btn.setToolTip(
-            "What is actually RECORDED near the latitude/longitude above, narrowed "
-            "to the group you pick — ranked by how often it has been "
-            "found there.\n\n"
-            "This is the only source that is region-aware: your marine list is "
-            "global (everything underwater, everywhere) and the iNaturalist route "
-            "is an unranked summary. Use this when you know where the photo was "
-            "taken.\n\n"
-            "Needs the internet; no account or API key.")
+            "GBIF OCCURRENCE records near the coordinates above, narrowed to the group — "
+            "museum specimens, survey and atlas data, eDNA, plus iNaturalist-mediated "
+            "records. Ranked by HOW MANY RECORDS exist for each species, so the order means "
+            "\"most often recorded here\".\n\n"
+            "Differences from \"Fill from location (iNaturalist)\":\n"
+            "  • no month filter (GBIF coverage is survey-driven, so a month filter measures "
+            "when people sampled, not seasonality)\n"
+            "  • ranking is record count, not community votes\n"
+            "  • includes records that are not photographs\n"
+            "  • a group GBIF cannot filter (bony fishes) is restricted to your own "
+            "species list, and says so\n\n"
+            "Needs the Online switch on; no account or API key.")
         r2.addWidget(self.gbif_btn)
         # Clear, with a restore path. Wiping 880 names — or a list you spent a minute
         # pasting — is easy to do by accident, so the button keeps the cleared text in
@@ -1376,13 +1382,23 @@ class MainWindow(QMainWindow):
         # that row's minimum width the SUM of six widgets, which is what pushed the
         # window past the screen edge.
         r2b = QHBoxLayout()
-        self.online_chk = QCheckBox("Online (iNat, GBIF)")
+        # ONE switch for BOTH network services. It was labelled "Online (iNat, GBIF)", which
+        # reads like two separate ticks for two separate sources; it is not — unticking it
+        # disables iNaturalist and GBIF together, and the marine lists / Load from file keep
+        # working offline.
+        self.online_chk = QCheckBox("Online (iNat + GBIF)")
         # Short label: r2b also holds the search-area and count labels, and a
         # long checkbox text was pushing the window floor past a 1260 px screen.
         self.online_chk.setToolTip(
-            "Enable the network sources: iNaturalist (Find place, Fill from "
-            "location) and GBIF (Place list). The marine lists and Load from "
-            "file work fully offline.")
+            "ONE switch for BOTH network services — it enables iNaturalist (Find place, "
+            "Fill from location) and GBIF (Place list) together, and there is no separate "
+            "tick for each.\n\n"
+            "The two are different sources, not two views of one:\n"
+            "  • iNaturalist = research-grade OBSERVATIONS (photographs), ranked by "
+            "community votes, month filter available;\n"
+            "  • GBIF = OCCURRENCE records (museum, survey, atlas, eDNA), ranked by record "
+            "count, no month filter.\n\n"
+            "Marine list… and Load from file… work fully offline.")
         self.online_chk.setChecked(bool(self.cfg.get("online")))
         self.online_chk.toggled.connect(self.on_online_toggle)
         r2b.addWidget(self.online_chk)
@@ -1525,7 +1541,16 @@ class MainWindow(QMainWindow):
             "'sea · turtles' for sea turtles (they belong to Reptilia but a diver "
             "looks under sea).")
         r3.addWidget(self.group)
-        self.fill_btn = QPushButton("Fill from location")
+        self.fill_btn = QPushButton("Fill from location (iNat)")
+        self.fill_btn.setToolTip(
+            "iNaturalist OBSERVATIONS near the place above: research-grade records only, "
+            "ordered by community votes, and filtered by the group — and by the month you "
+            "choose. Up to 200 records per query, so a rich place hits the cap.\n\n"
+            "Use this for \"what do people actually photograph and get identified here\", "
+            "and in this season.\n\n"
+            "For occurrence records from museums, surveys and atlases instead, use "
+            "\"Place list (GBIF)\" — different data, different ranking.\n\n"
+            "Needs the Online switch on; no account or API key.")
         self.fill_btn.clicked.connect(self.fill_from_location)
         self.fill_btn.setEnabled(self.online_chk.isChecked())
         r3.addWidget(self.fill_btn)

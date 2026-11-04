@@ -247,6 +247,22 @@ takes `--depth MIN,MAX` with that warning in its help text. The GUI never passes
   you land on the species. Several records for one name (an accepted species and a synonym, or
   taxa in different groups) are offered as a list instead of being silently resolved.
 
+- **The two network sources are different data, and there is ONE switch for both.**
+  `Online (iNat + GBIF)` enables iNaturalist and GBIF together; it is not a tick per service.
+  What they return differs, and so does the ranking:
+
+  | | Fill from location (**iNaturalist**) | Place list (**GBIF**) |
+  |---|---|---|
+  | record type | research-grade **observations** (photographs, sound) | **occurrence** records — museum specimens, surveys, atlases, eDNA, plus iNat-mediated ones |
+  | ranking | community **votes** | **number of records** per species |
+  | month filter | **yes**, optional | **no**, deliberately — coverage is survey-driven, so a month filter measures when people sampled, not seasonality |
+  | group filter | `iconic_taxa` / `taxon_id` | GBIF backbone `taxonKey`; bony fishes cannot be filtered, so that group is restricted to your own species list and the log says so |
+  | cap | 200 records per query, so a rich place truncates | facet limit on the distinct-species list |
+
+  Use GBIF for "what is recorded here" (broader, includes non-photographic evidence); use
+  iNaturalist for "what gets photographed and confirmed here, in this season". The
+  `per-photo GPS candidates` option in batch mode uses **iNaturalist only**.
+
 - **No account or API key required.**
 - **Loading replaces the list** (there is an `add to list` checkbox if you want to
   merge instead).
