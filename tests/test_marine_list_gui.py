@@ -116,8 +116,10 @@ check("a second check does not duplicate", len(MA.load(add_file)) == 2, MA.load(
 print("6. with automatic adding off, it only reports")
 win.log.clear()
 win.cfg["auto_add_to_marine_list"] = False
-win.ensure_in_marine_list("Doto ostenta", "you taught it")
-check("nothing was written", "Doto ostenta" not in MA.load(add_file), MA.load(add_file))
+# A species that is in NO list at this point: "Doto ostenta" was written into the temp
+# nudibranchs file by section 4, so using it here tested the wrong branch.
+win.ensure_in_marine_list("Trapania toddi", "you taught it")
+check("nothing was written", "Trapania toddi" not in MA.load(add_file), MA.load(add_file))
 check("the log says the species is missing from every list",
       "in none of your lists" in win.log.toPlainText(), win.log.toPlainText()[-160:])
 win.cfg["auto_add_to_marine_list"] = True
@@ -180,7 +182,9 @@ win.load_marine_group()
 app.processEvents()
 check("your marine species are part of the marine list",
       "Phyllodesmium poindimiei" in win.candidates(), win.candidates())
-check("and are marked as yours", "+1 of yours" in win.cand_count.text(), win.cand_count.text())
+_mine = len(MA.load(add_file))
+check("and are marked as yours", f"+{_mine} of yours" in win.cand_count.text(),
+      (win.cand_count.text(), _mine))
 
 shutil.rmtree(work, ignore_errors=True)
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
