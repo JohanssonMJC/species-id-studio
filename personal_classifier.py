@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
 import time
 
 import numpy as np
@@ -249,6 +250,135 @@ def add_example(path, embedding, species: str, *, photo: str | None = None,
     return {"added": True, "reason": "added", "photos": len(L2), "species": len(counts),
             "examples_for_species": counts.get(species, 0),
             "provenance": provenance_summary(meta)}
+
+
+def origin_label(src: dict) -> str:
+    """Plain words for where a label came from — the distinction the whole safety story rests on."""
+    origin = str((src or {}).get("origin") or "human")
+    rank = (src or {}).get("rank")
+    if origin in ("human", "typed"):
+        return "you"
+    if origin.startswith("app:"):
+        return "app top pick" if rank in (1, None) else f"app rank {rank}"
+    return origin
+
+
+def entries(path: pathlib.Path) -> list[dict]:
+    """One row per labelled photo, in file order, for a review list.
+
+    `index` is the position in the prototype array, which is what remove() acts on — the photo
+    path is not unique in principle (the same file can be taught twice under different species),
+    so an index is the only unambiguous handle.
+    """
+    loaded = load(path)
+    if loaded is None:
+        return []
+    _P, L, meta = loaded
+    labels = [str(x) for x in np.asarray(L).tolist()]
+    sources = list(meta.get("sources") or [])
+    while len(sources) < len(labels):                 # a file fitted before provenance existed
+        sources.append({"origin": "human"})
+    out: list[dict] = []
+    for i, species in enumerate(labels):
+        src = sources[i] or {}
+        out.append({"index": i, "species": species,
+                    "photo": str(src.get("photo") or ""),
+                    "origin": str(src.get("origin") or "human"),
+                    "origin_label": origin_label(src),
+                    "rank": src.get("rank"),
+                    "confidence": src.get("confidence"),
+                    "when": str(src.get("when") or "")})
+    return out
+
+
+def _rewrite_counts(meta: dict, labels: np.ndarray, sources: list) -> dict:
+    counts: dict[str, int] = {}
+    for lab in np.asarray(labels).tolist():
+        counts[str(lab)] = counts.get(str(lab), 0) + 1
+    meta = dict(meta)
+    meta.update({"photos": int(len(labels)), "species": int(len(counts)),
+                 "examples_per_species": counts, "sources": list(sources)})
+    return meta
+
+
+def remove(path: pathlib.Path, *, photos=(), indices=(), backup: bool = True) -> dict:
+    """Delete labelled examples. Returns a report of what went and what is left.
+
+    Why this exists: a wrong label is worse than a missing one. It becomes a confident wrong
+    answer that also suppresses the right one, and there was no way to take it back — teaching
+    was additive only.
+
+    Two safeguards, both deliberate:
+      * a timestamped BACKUP of the classifier is written before anything is rewritten, because
+        this is the file the app's answers depend on and a mis-ticked row is easy;
+      * if the removal empties the classifier, the npz/json pair is deleted rather than left as an
+        empty prototype table — an empty table would load as "fitted" and answer nothing, which is
+        a worse state than "not fitted" and harder to notice.
+    """
+    loaded = load(path)
+    path = pathlib.Path(path)
+    if loaded is None:
+        return {"removed": 0, "reason": "no fitted classifier", "photos": 0, "species": 0,
+                "backup": "", "missing": list(photos)}
+    P, L, meta = loaded
+    labels = [str(x) for x in np.asarray(L).tolist()]
+    sources = list(meta.get("sources") or [])
+    while len(sources) < len(labels):
+        sources.append({"origin": "human"})
+
+    drop: set[int] = set()
+    for i in indices:
+        if 0 <= int(i) < len(labels):
+            drop.add(int(i))
+    wanted = {str(x) for x in photos if str(x)}
+    missing: list[str] = []
+    if wanted:
+        seen: set[str] = set()
+        for i, src in enumerate(sources):
+            photo = str((src or {}).get("photo") or "")
+            if photo and photo in wanted:
+                drop.add(i)
+                seen.add(photo)
+        missing = sorted(wanted - seen)
+
+    if not drop:
+        return {"removed": 0, "reason": "nothing matched", "photos": len(labels),
+                "species": len(set(labels)), "backup": "", "missing": missing}
+
+    keep = [i for i in range(len(labels)) if i not in drop]
+    P2 = np.asarray(P)[keep]
+    L2 = np.asarray(L)[keep]
+    S2 = [sources[i] for i in keep]
+    meta2 = _rewrite_counts(meta, L2, S2)
+
+    backup_path = ""
+    if backup:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        try:
+            b = pathlib.Path(str(path) + f".bak-{stamp}")
+            shutil.copy2(path, b)
+            sidecar = path.with_suffix(path.suffix + ".json")
+            if sidecar.is_file():
+                shutil.copy2(sidecar, pathlib.Path(str(b) + ".json"))
+            backup_path = str(b)
+        except OSError:
+            backup_path = ""
+
+    if meta2["photos"] == 0:
+        # nothing left: remove the files rather than leave a classifier that answers nothing
+        for f in (path, path.with_suffix(path.suffix + ".json")):
+            try:
+                pathlib.Path(f).unlink()
+            except OSError:
+                pass
+        return {"removed": len(drop), "reason": "removed the last label — the fitted "
+                "classifier is now empty and was deleted", "photos": 0, "species": 0,
+                "backup": backup_path, "missing": missing}
+
+    save(path, P2, L2, meta2)
+    return {"removed": len(drop), "reason": "", "photos": int(meta2["photos"]),
+            "species": int(meta2["species"]), "backup": backup_path, "missing": missing,
+            "provenance": provenance_summary(meta2)}
 
 
 def save(path: pathlib.Path, prototypes: np.ndarray, labels: np.ndarray,

@@ -477,5 +477,70 @@ check("adding it twice is refused politely",
       win.statusBar().currentMessage())
 check("the list still has three names", len(win.candidates()) == 3, len(win.candidates()))
 
+print("18. reviewing labels: a wrong one can be seen and removed")
+import numpy as _np
+_pdir = pathlib.Path(tempfile.mkdtemp())
+_p = species_gui.personal_path()
+_P = _np.random.default_rng(7).normal(size=(4, 8)).astype("float32")
+_L = _np.array(["Alpha beta", "Alpha beta", "Gamma delta", "Zeta omega"])
+_meta = {"photos": 4, "species": 3,
+         "examples_per_species": {"Alpha beta": 2, "Gamma delta": 1, "Zeta omega": 1},
+         "sources": [{"photo": "/p/0.jpg", "origin": "human", "when": "2026-10-01 09:00:00"},
+                     {"photo": "/p/1.jpg", "origin": "app:text", "rank": 1,
+                      "when": "2026-10-02 09:00:00"},
+                     {"photo": "/p/2.jpg", "origin": "human", "when": "2026-10-03 09:00:00"},
+                     {"photo": "/p/3.jpg", "origin": "app:text", "rank": 4,
+                      "when": "2026-10-04 09:00:00"}]}
+species_gui.personal_classifier.save(_p, _P, _L, _meta)
+win._personal_cache = (None, None)
+
+_rows = species_gui.personal_classifier.entries(_p)
+_dlg = species_gui.LabelsDialog(win, _rows, _p)
+check("the dialog lists every label", _dlg.table.rowCount() == 4, _dlg.table.rowCount())
+check("the source column distinguishes you from the app",
+      _dlg.table.item(0, 2).text() == "you" and _dlg.table.item(1, 2).text() == "app top pick",
+      (_dlg.table.item(0, 2).text(), _dlg.table.item(1, 2).text()))
+check("nothing is ticked to begin with", _dlg.ticked() == [])
+check("the button is disabled with no ticks", _dlg.remove_btn.isEnabled() is False)
+
+_dlg.filter.setText("gamma")
+check("filter hides non-matching rows",
+      [i for i in range(4) if not _dlg.table.isRowHidden(i)] == [2],
+      [i for i in range(4) if not _dlg.table.isRowHidden(i)])
+check("filtering does not drop rows from the list", len(_dlg._rows) == 4)
+_dlg.filter.setText("")
+
+_dlg.tick_app()
+check("app-suggested labels are the ones ticked",
+      [r["species"] for r in _dlg.ticked()] == ["Alpha beta", "Zeta omega"],
+      [r["species"] for r in _dlg.ticked()])
+check("the counter follows the ticks", "2 of 4" in _dlg.count_lbl.text(), _dlg.count_lbl.text())
+check("the button enables with ticks", _dlg.remove_btn.isEnabled() is True)
+
+win.forget_labels([r["index"] for r in _dlg.ticked()], _p)
+_after = species_gui.personal_classifier.entries(_p)
+check("both app-sourced labels are gone", len(_after) == 2, _after)
+check("the human labels survive",
+      [e["origin_label"] for e in _after] == ["you", "you"], _after)
+check("a backup is written next to the classifier",
+      any(".bak-" in f.name for f in _p.parent.iterdir()),
+      sorted(f.name for f in _p.parent.iterdir()))
+check("the cache is invalidated so the next identify reloads",
+      win._personal_cache == (None, None), win._personal_cache)
+check("the log says what was removed", "removed 2" in win.log.toPlainText(),
+      win.log.toPlainText()[-200:])
+check("the classifier still loads and answers",
+      species_gui.personal_classifier.load(_p) is not None)
+check("the menu entry reports the remaining count",
+      "2" in win.review_labels_action.text() or "fitted" in win.review_labels_action.text(),
+      win.review_labels_action.text())
+
+win.forget_labels([e["index"] for e in species_gui.personal_classifier.entries(_p)], _p)
+check("removing the last label deletes the fitted file", not _p.exists())
+check("and the menu says nothing is fitted",
+      "none fitted" in win.review_labels_action.text(), win.review_labels_action.text())
+import shutil as _sh2
+_sh2.rmtree(_pdir, ignore_errors=True)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

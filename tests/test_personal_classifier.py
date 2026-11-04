@@ -290,5 +290,65 @@ check("one lower-rank label", prov["app_lower_rank"] == 1, prov)
 check("the split adds up",
       prov["human"] + prov["app_top1"] + prov["app_lower_rank"] + prov["typed"] == 5, prov)
 
+print("18. a wrong label can be removed, not just added")
+import tempfile as _tf
+_td = pathlib.Path(_tf.mkdtemp())
+_p = _td / "pc.npz"
+_rng = np.random.default_rng(3)
+_P = _rng.normal(size=(4, 8)).astype("float32")
+_L = np.array(["Alpha beta", "Alpha beta", "Gamma delta", "Zeta omega"])
+_meta = {"photos": 4, "species": 3,
+         "examples_per_species": {"Alpha beta": 2, "Gamma delta": 1, "Zeta omega": 1},
+         "sources": [{"photo": "/p/0.jpg", "origin": "human", "when": "2026-10-01 09:00:00"},
+                     {"photo": "/p/1.jpg", "origin": "app:text", "rank": 1,
+                      "when": "2026-10-02 09:00:00"},
+                     {"photo": "/p/2.jpg", "origin": "human", "when": "2026-10-03 09:00:00"},
+                     {"photo": "/p/3.jpg", "origin": "app:text", "rank": 4,
+                      "when": "2026-10-04 09:00:00"}]}
+pc.save(_p, _P, _L, _meta)
+
+rows = pc.entries(_p)
+check("one row per label", len(rows) == 4, len(rows))
+check("rows carry the index", [r["index"] for r in rows] == [0, 1, 2, 3])
+check("provenance in words", rows[1]["origin_label"] == "app top pick", rows[1]["origin_label"])
+check("rank shown when not the top pick", rows[3]["origin_label"] == "app rank 4",
+      rows[3]["origin_label"])
+check("human label reads as you", rows[0]["origin_label"] == "you", rows[0]["origin_label"])
+check("the photo path is carried", rows[2]["photo"] == "/p/2.jpg", rows[2]["photo"])
+
+rep = pc.remove(_p, photos=["/p/1.jpg"])
+check("removed the one asked for", rep["removed"] == 1, rep)
+check("counts updated", rep["photos"] == 3 and rep["species"] == 3, rep)
+check("a backup was written", bool(rep["backup"]) and pathlib.Path(rep["backup"]).is_file(),
+      rep["backup"])
+_P2, _L2, _m2 = pc.load(_p)
+check("labels shrank by one", len(_L2) == 3, list(_L2))
+check("sources stay aligned with labels", len(_m2["sources"]) == len(_L2),
+      (len(_m2["sources"]), len(_L2)))
+check("the removed photo is gone from provenance",
+      "/p/1.jpg" not in [s.get("photo") for s in _m2["sources"]],
+      [s.get("photo") for s in _m2["sources"]])
+check("per-species counts recomputed", _m2["examples_per_species"].get("Alpha beta") == 1,
+      _m2["examples_per_species"])
+
+rep = pc.remove(_p, indices=[0], photos=["/p/not-there.jpg"])
+check("index and path removal combine", rep["removed"] == 1, rep)
+check("a path that matched nothing is reported, not silently ignored",
+      rep["missing"] == ["/p/not-there.jpg"], rep["missing"])
+
+rep = pc.remove(_p, indices=[99])
+check("an out-of-range index removes nothing", rep["removed"] == 0, rep)
+check("and the file is untouched", len(pc.load(_p)[1]) == 2, len(pc.load(_p)[1]))
+
+rep = pc.remove(_p, indices=[0, 1])
+check("removing the last labels deletes the file", rep["photos"] == 0, rep)
+check("with a reason that says so", "deleted" in rep["reason"], rep["reason"])
+check("the npz is gone", not _p.exists())
+check("the sidecar is gone", not _p.with_suffix(_p.suffix + ".json").exists())
+check("the backup survives for undo", bool(rep["backup"]) and pathlib.Path(rep["backup"]).is_file(),
+      rep["backup"])
+import shutil as _sh
+_sh.rmtree(_td, ignore_errors=True)
+
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 raise SystemExit(1 if fails else 0)

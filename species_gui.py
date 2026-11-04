@@ -445,6 +445,164 @@ class GbifLookupWorker(QThread):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+class LabelsDialog(QDialog):
+    """Review the labelled photos the classifier was taught, and remove the wrong ones.
+
+    Why a dialog rather than a button that deletes the last thing: a mistaken label is not
+    obviously wrong until you see it in context. Listing every label with its provenance (you,
+    or the app's own suggestion at rank N) lets a mis-taught photo — often the one that made a
+    species suddenly over-claim — be found and dropped.
+    """
+    def __init__(self, parent, rows: list[dict], npz_path):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} — my labels ({len(rows)})")
+        self.resize(920, 560)
+        self._rows = rows
+        self.npz_path = npz_path
+        v = QVBoxLayout(self)
+        intro = QLabel(
+            f"{len(rows)} labelled photos in {npz_path.name}.\n"
+            "Tick the ones whose species is WRONG — removing a bad label helps more than adding "
+            "a good one, because a wrong label answers confidently and suppresses the right "
+            "species. A timestamped backup is written before anything is changed.")
+        intro.setWordWrap(True)
+        v.addWidget(intro)
+
+        self.filter = QLineEdit()
+        self.filter.setPlaceholderText("filter by species, source or photo name…")
+        self.filter.textChanged.connect(self._apply_filter)
+        v.addWidget(self.filter)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["✓ remove", "Species", "Label from", "Added", "Photo"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for c in (2, 3, 4):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        v.addWidget(self.table, 1)
+
+        self.count_lbl = QLabel("")
+        v.addWidget(self.count_lbl)
+
+        br = QHBoxLayout()
+        self.remove_btn = QPushButton("Remove ticked…")
+        self.remove_btn.clicked.connect(self.remove_ticked)
+        br.addWidget(self.remove_btn)
+        b = QPushButton("Tick all app suggestions")
+        b.setToolTip("Ticks every label that came from the app's own suggestion rather than "
+                     "from you — the ones that confirm what the classifier already believed.")
+        b.clicked.connect(self.tick_app)
+        br.addWidget(b)
+        b = QPushButton("Untick all")
+        b.clicked.connect(self.untick_all)
+        br.addWidget(b)
+        b = QPushButton("Reveal photo")
+        b.clicked.connect(self._reveal)
+        br.addWidget(b)
+        b = QPushButton("Close")
+        b.clicked.connect(self.accept)
+        br.addWidget(b)
+        v.addLayout(br)
+
+        self._fill()
+        self.table.itemChanged.connect(lambda *_: self._update_counts())
+
+    def _fill(self):
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(self._rows))
+        for i, r in enumerate(self._rows):
+            tick = QTableWidgetItem("")
+            tick.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable |
+                          Qt.ItemFlag.ItemIsSelectable)
+            tick.setCheckState(Qt.CheckState.Unchecked)
+            tick.setData(Qt.ItemDataRole.UserRole, r["index"])
+            self.table.setItem(i, 0, tick)
+            self.table.setItem(i, 1, QTableWidgetItem(r["species"]))
+            src = QTableWidgetItem(r["origin_label"])
+            src.setToolTip(f"origin={r['origin']} rank={r['rank']} confidence={r['confidence']}")
+            if r["origin_label"].startswith("app"):
+                src.setForeground(QColor("#b45309"))
+            self.table.setItem(i, 2, src)
+            self.table.setItem(i, 3, QTableWidgetItem(r["when"] or "—"))
+            ph = QTableWidgetItem(Path(r["photo"]).name if r["photo"] else "—")
+            ph.setToolTip(r["photo"])
+            self.table.setItem(i, 4, ph)
+        self.table.blockSignals(False)
+        self._apply_filter(self.filter.text())
+        self._update_counts()
+
+    def _apply_filter(self, text: str):
+        needle = (text or "").strip().lower()
+        for i, r in enumerate(self._rows):
+            show = (not needle
+                    or needle in r["species"].lower()
+                    or needle in r["origin_label"].lower()
+                    or needle in r["photo"].lower())
+            self.table.setRowHidden(i, not show)
+
+    def ticked(self) -> list[dict]:
+        out = []
+        for i, r in enumerate(self._rows):
+            it = self.table.item(i, 0)
+            if it and it.checkState() == Qt.CheckState.Checked:
+                out.append(r)
+        return out
+
+    def _update_counts(self):
+        n = len(self.ticked())
+        self.count_lbl.setText(f"{n} of {len(self._rows)} ticked for removal"
+                               if n else f"{len(self._rows)} labels — nothing ticked")
+        self.remove_btn.setEnabled(bool(n))
+
+    def tick_app(self):
+        self.table.blockSignals(True)
+        for i, r in enumerate(self._rows):
+            if r["origin_label"].startswith("app"):
+                self.table.item(i, 0).setCheckState(Qt.CheckState.Checked)
+        self.table.blockSignals(False)
+        self._update_counts()
+
+    def untick_all(self):
+        self.table.blockSignals(True)
+        for i in range(len(self._rows)):
+            self.table.item(i, 0).setCheckState(Qt.CheckState.Unchecked)
+        self.table.blockSignals(False)
+        self._update_counts()
+
+    def _reveal(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._rows):
+            return
+        photo = self._rows[row]["photo"]
+        if photo:
+            QApplication.clipboard().setText(photo)
+            self.count_lbl.setText(f"path copied: {photo}")
+
+    def remove_ticked(self) -> None:
+        rows = self.ticked()
+        if not rows:
+            return
+        species = sorted({r["species"] for r in rows})
+        preview = ", ".join(species[:6]) + ("…" if len(species) > 6 else "")
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setText(f"Remove {len(rows)} labelled photo(s)?")
+        box.setInformativeText(
+            f"Species affected: {preview}\n\n"
+            "A timestamped backup of the classifier is written first, so this can be undone by "
+            "copying the .bak file back over the .npz.")
+        box.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self.accept()
+        self.parent().forget_labels([r["index"] for r in rows], self.npz_path)
+
+
 class WormsWorker(QThread):
     """Resolve one name to its WoRMS species page.
 
@@ -498,6 +656,10 @@ class TeachLabelWorker(QThread):
                 emb = BioClipWorker._engine.image_features(self.path)
             out = personal_classifier.add_example(
                 personal_path(), emb, self.species, photo=self.path, **self.source)
+            # add_example's own "species" field is the COUNT of species in the file, not the
+            # name — passing it on as if it were a name crashed the marine-list check with
+            # "int has no attribute strip". Carry the name explicitly.
+            out["species_name"] = self.species
             self.done.emit(out)
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -1075,6 +1237,14 @@ class MainWindow(QMainWindow):
         a = QAction("What is fitted?", self)
         a.triggered.connect(self.show_personal)
         c.addAction(a)
+        # Removing a wrong label lives next to adding one: a bad label is worse than a missing
+        # one, and until now teaching was additive only.
+        self.review_labels_action = QAction("Review my labels…", self)
+        self.review_labels_action.setToolTip(
+            "List every labelled photo with where its label came from, and remove the ones whose "
+            "species is wrong. A timestamped backup is written before any change.")
+        self.review_labels_action.triggered.connect(self.review_labels)
+        c.addAction(self.review_labels_action)
         c.addSeparator()
         a = QAction("Use averages instead of nearest photo", self)
         a.setCheckable(True)
@@ -1805,6 +1975,62 @@ class MainWindow(QMainWindow):
             "marine list: missing species are "
             + ("added automatically" if on else "only reported, not added"))
 
+    def review_labels(self) -> None:
+        """Open the label list so a wrong label can be found and removed."""
+        if personal_classifier is None:
+            QMessageBox.warning(self, APP_NAME, "personal_classifier.py is missing.")
+            return
+        path = personal_path()
+        rows = personal_classifier.entries(path)
+        if not rows:
+            QMessageBox.information(
+                self, APP_NAME,
+                "No fitted classifier yet.\n\n"
+                "Your labels ▸ Fit from labelled folder… builds one from photos whose filenames "
+                "start with the species, and each photo you teach adds to it.")
+            return
+        dlg = LabelsDialog(self, rows, path)
+        dlg.exec()
+
+    def forget_labels(self, indices: list[int], npz_path=None) -> None:
+        """Remove labelled photos from the fitted classifier, and say what happened."""
+        if personal_classifier is None:
+            return
+        path = Path(npz_path) if npz_path else personal_path()
+        try:
+            rep = personal_classifier.remove(path, indices=indices)
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, f"Could not remove the label(s):\n\n{exc}")
+            return
+        self._personal_cache = (None, None)          # reload on the next identify
+        if rep.get("reason"):
+            self.log.appendPlainText(f"labels: {rep['reason']}")
+        else:
+            self.log.appendPlainText(
+                f"labels: removed {rep['removed']} — {rep['photos']} photos, "
+                f"{rep['species']} species left"
+                + (f"; backup: {Path(rep['backup']).name}" if rep.get("backup") else ""))
+        if rep.get("backup"):
+            self.log.appendPlainText(
+                f"  to undo, copy {Path(rep['backup']).name} over {path.name} "
+                f"(and its .json) — no other step needed")
+        self.statusBar().showMessage(
+            f"Removed {rep['removed']} label(s); {rep['photos']} photos remain", 20000)
+        self._refresh_labels_menu_state()
+
+    def _refresh_labels_menu_state(self) -> None:
+        act = getattr(self, "review_labels_action", None)
+        if act is None:
+            return
+        n = 0
+        if personal_classifier is not None:
+            try:
+                n = len(personal_classifier.entries(personal_path()))
+            except Exception:
+                n = 0
+        act.setText(f"Review my labels… ({n})" if n else "Review my labels… (none fitted)")
+        act.setEnabled(bool(n))
+
     def prompt_add_to_marine_list(self) -> None:
         """Ask for a name, then add it — the typed path to the same file."""
         name, ok = QInputDialog.getText(
@@ -1824,7 +2050,8 @@ class MainWindow(QMainWindow):
         Set `auto_add_to_marine_list` to false to be asked instead of written to; the checkbox is
         in the candidate box's right-click menu.
         """
-        if marine_additions is None or not (name or "").strip():
+        name = " ".join(str(name or "").split())     # never raise from a result slot
+        if marine_additions is None or not name:
             return
         try:
             m = marine_additions.membership(MARINE_LISTS, name)
@@ -2911,11 +3138,13 @@ class MainWindow(QMainWindow):
                 "  Labels recorded from the app's own top pick are counted separately: "
                 "they confirm what the classifier already believes, so they raise its "
                 "confidence but are no evidence of accuracy.")
+        taught = str(out.get("species_name") or "")
         self.statusBar().showMessage(
-            f"Learned {out['species']} — {out['photos']} labelled photos", 20000)
+            f"Learned {taught or 'that species'} — {out['photos']} labelled photos", 20000)
         # A species you taught is one you can recognise, so it belongs in your own marine list.
         # Checked first: most taught species are already in one, and need nothing.
-        self.ensure_in_marine_list(out["species"], "you taught it")
+        if taught:
+            self.ensure_in_marine_list(taught, "you taught it")
 
     def _on_teach_fail(self, msg: str) -> None:
         self.log.appendPlainText(f"Could not add the label: {msg}")

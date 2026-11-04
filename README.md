@@ -705,6 +705,33 @@ file becomes something the classifier can rank and a junk entry is scored as if 
 species. Duplicates are refused case-insensitively, and adding the same species twice is a
 no-op rather than a second row.
 
+### Removing a label that turned out to be wrong
+
+Teaching was additive only, which is the wrong asymmetry: a **wrong** label is worse than a
+missing one, because it answers confidently and suppresses the right species.
+
+**Your labels ▸ Review my labels…** lists every labelled photo with the species, where the label
+came from (`you`, `app top pick`, `app rank N`), when it was added, and the file name. Tick what
+is wrong and remove it; the counter above the buttons and the menu label both report what is
+left. The filter box narrows by species, source or file name, and **Tick all app suggestions**
+selects the labels that merely confirmed what the classifier already believed — usually the ones
+worth auditing first. **Reveal photo** copies the file path, since the basename alone rarely
+identifies an animal.
+
+Two safeguards, both deliberate:
+
+- a **timestamped backup** (`personal_classifier.npz.bak-YYYYmmdd_HHMMSS`, plus the `.json`) is
+  written before anything is rewritten, and the log says so with the file name — undo is copying
+  it back, with no other step;
+- removing the **last** label deletes the fitted file rather than leaving an empty prototype
+  table, because an empty table loads as "fitted" and answers nothing, which is a worse and
+  harder-to-notice state than "not fitted".
+
+`personal_classifier.remove()` takes either photo paths or prototype indices (the index is the
+unambiguous handle — the same file can be taught twice under different species) and returns what
+went, what is left, any paths that matched nothing, and the backup location. The next
+identification reloads the classifier automatically.
+
 #### The candidate list stays primary
 
 Your own added species are **not** folded into the pool by default: the list you loaded is the
